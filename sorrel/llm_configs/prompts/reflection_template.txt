@@ -1,0 +1,15 @@
+# EPISODE REFLECTION
+
+You just completed an episode. Here's a summary of what happened:
+
+{summary}
+
+---
+
+Reflect on this episode:
+1. What strategy worked well?
+2. What mistakes did you make?
+3. How should you adjust your approach in future episodes?
+4. What did you learn about other agents?
+
+Provide a concise 2-3 sentence reflection that will guide your future decisions.

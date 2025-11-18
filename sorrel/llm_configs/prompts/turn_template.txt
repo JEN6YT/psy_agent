@@ -1,0 +1,46 @@
+# CURRENT TURN
+
+## Observation
+{obs_text}
+
+## Memory & Context
+{memory_text}
+
+## Available Actions
+{action_space_json}
+
+---
+
+## Response Format
+Return only valid JSON following this structure:
+{
+  "REASONING": "string (1–2 concise sentences)",
+  "ACTION": number,        // integer action id from {action_table}
+  "MESSAGE": "string",     // "" if no nearby ally
+  "CONFIDENCE": number     // integer 0–100
+}
+
+For instance,
+{
+  "REASONING": "Agent 1 is adjacent and has cooperated before, so I will attempt to hunt the stag together.",
+  "ACTION": 5,
+  "MESSAGE": "Let's cooperate on the stag!",
+  "CONFIDENCE": 85
+}
+
+## Constraints
+- Only include a MESSAGE if another agent is within observation range. The observation includes nearby.ally_adjacent (true/false). If nearby.ally_adjacent is false (no nearby agents), set MESSAGE to "" (empty string).
+- Keep MESSAGE within 5 words.
+- Only choose Interact (ACTION 5) if another agent is adjacent and visible in your observation. Otherwise, moving or staying still is safer.
+- Use only information provided in Observation, Recent Messages and History, Reputation.
+- Do not invent entities or actions. Return JSON only.
+
+Be strategic, concise, and adaptive to other agents' behavior.
+
+Analyze the situation and decide your next action. Provide:
+- REASONING: Brief strategic analysis
+- ACTION: Action ID number
+- MESSAGE: Communication to nearby agents
+- CONFIDENCE: 0–100
+
+Output JSON ONLY.
