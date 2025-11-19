@@ -26,7 +26,21 @@ from sorrel.examples.staghunt.map_generator import MapBasedWorldGenerator
 # Communication + reputation
 from sorrel.llm_configs.communication.message_bus import MessageBus
 from sorrel.llm_configs.communication.reputation import Reputation
+from sorrel.examples.staghunt.entities import AttackBeam
 
+ORIENTATION_VECTORS: Dict[int, Tuple[int, int]] = {
+    0: (-1, 0),  # north (up)
+    1: (0, 1),  # east (right)
+    2: (1, 0),  # south (down)
+    3: (0, -1),  # west (left)
+}
+
+VECTOR_TO_ORIENTATION: Dict[Tuple[int, int], int] = {
+    (-1, 0): 0,  # north
+    (0, 1): 1,   # east
+    (1, 0): 2,   # south
+    (0, -1): 3,  # west
+}
 
 class StagHuntEnv:
     """
@@ -218,20 +232,23 @@ class StagHuntEnv:
     ) -> Tuple[Dict[int, Dict[str, Any]], Dict[int, float], bool, Dict[str, Any]]:
         """
         actions: {agent_id: action_id}
-            0: stay, 1: up, 2: right, 3: down, 4: left, 5: interact
+            0: stay, 1: up, 2: right, 3: down, 4: left, 5: attack
         """
+        # initialize per-agent rewards for this step
+        step_rewards: Dict[int, float] = {aid: 0.0 for aid in range(self.num_agents)}
+
         # Movement (also sets movement/entry flags)
         self._handle_movement(actions)
 
-        # Interactions & rewards
-        step_rewards = self._handle_interactions(actions)
+        # Interactions & rewards from ATTACK actions
+        self._handle_attacks(actions, step_rewards)
 
         # Timers/transitions/regeneration
         self._update_frozen_timers()
         self._regeneration_step()
-        self._transition_step()
+        self._transition_step() # resource respawns, beam decay, etc.
 
-        # Accumulate
+        # Accumulate episode totals
         for aid, r in step_rewards.items():
             self.cum_rewards[aid] += r
             self.total_reward += r
@@ -247,6 +264,7 @@ class StagHuntEnv:
         obs = self._get_observations()
         info = {"turn": self.turn, "total_reward": self.total_reward}
         return obs, step_rewards, done, info
+
 
     # -----------------------------
     # Movement
@@ -326,7 +344,6 @@ class StagHuntEnv:
                 new_positions[aid] = t
                 occupied.add(t2d)
 
-        # IMPORTANT: do NOT touch dynamic_layer here; only update bookkeeping
         for aid, pos in new_positions.items():
             agent = self.agents[aid]
             agent.location = pos
@@ -341,6 +358,15 @@ class StagHuntEnv:
             moved = (oy, ox) != (ny, nx)
             self._moved_flags[aid] = moved
 
+            agent = self.agents[aid]
+            if moved:
+                dy = ny - oy
+                dx = nx - ox
+                # Only update if agent supports orientation mapping
+                orient_map = VECTOR_TO_ORIENTATION
+                if (dy, dx) in orient_map:
+                    agent.orientation = orient_map[(dy, dx)]
+                    
             ent_new = self.world.observe((ny, nx, self.world.dynamic_layer))
             new_is_resource = isinstance(ent_new, (HareResource, StagResource))
             self._entered_resource_flags[aid] = (not old_is_resource[aid]) and new_is_resource
@@ -356,104 +382,334 @@ class StagHuntEnv:
     # -----------------------------
     # Interactions & rewards
     # -----------------------------
-    def _handle_interactions(self, actions: Dict[int, int]) -> Dict[int, float]:
-        rewards = {i: 0.0 for i in range(self.num_agents)}
 
-        # --- params (support both dict config and object config) ---
-        def _wp(key, default):
-            if isinstance(self.config, dict):
-                return self.config.get("world", {}).get(key, default)
-            wobj = getattr(self.config, "world", None)
-            return getattr(wobj, key, default) if wobj is not None else default
+    def _handle_attacks(
+        self,
+        actions: Dict[int, int],
+        step_rewards: Dict[int, float],
+    ) -> None:
+        """
+        Process ATTACK actions for all agents.
 
-        hare_reward       = float(_wp("hare_reward", 1.0))
-        stag_reward       = float(_wp("stag_reward", 5.0))
-        sucker_payoff     = float(_wp("sucker_payoff", 0.0))
-        taste_reward      = float(_wp("taste_reward", 0.0))
-        r_step            = float(_wp("r_step", 0.0))
-        r_idle            = float(_wp("r_idle", 0.0))
-        quorum_k          = int(_wp("stag_quorum_k", 2))
-        hare_exclusive    = bool(_wp("hare_exclusive", True))
-        share_stag_reward = bool(_wp("share_stag_reward", False))
+        For any aid with action == 5:
+        - pay attack_cost
+        - spawn beam according to agent.orientation
+        - apply on_attack to resources
+        - call handle_resource_defeat to share rewards
+        - add attacking agent's immediate reward into step_rewards[aid]
+        """
+        world = self.world
+        env = getattr(world, "environment", None)
+        metrics = getattr(env, "metrics_collector", None)
+        dynamic_layer = getattr(world, "dynamic_layer", None)
 
-        # --- layer / resource read ---
-        res_layer = getattr(self.world, "resource_layer",
-                    getattr(self.world, "dynamic_layer", None))
-        assert res_layer is not None, "No resource/dynamic layer on world"
+        for aid, act in actions.items():
+            if act != 5:
+                continue  # not ATTACK
 
-        # who is standing on what
-        from collections import defaultdict
-        bucket = defaultdict(list)  # (y,x,type) -> [aid]
-        for aid in range(self.num_agents):
-            y, x, _ = self.agent_positions[aid]
-            ent = self.world.observe((y, x, res_layer))
-            rtype = getattr(ent, "resource_type", None)  # "HARE"/"STAG"/None
-            if rtype in ("hare", "stag"):
-                bucket[(y, x, rtype)].append(aid)
+            agent = self.agents[aid]
 
-        consumed = []
-
-        # --- HARE: standing gives reward; exclusivity optional ---
-        for (y, x, t), group in bucket.items():
-            if t != "hare":
-                continue
-            loc = (y, x, res_layer)
-            ent = self.world.observe(loc)
-            if getattr(ent, "resource_type", None) != "hare":
+            # cooldown check
+            if getattr(self, "attack_cooldown_timer", 0) > 0:
+                self.attack_cooldown_timer -= 1
                 continue
 
-            if hare_exclusive:
-                # deterministic single winner
-                winner = min(group)
-                rewards[winner] += hare_reward
+            attack_cost = getattr(world, "attack_cost", 0.05)
+            step_rewards[aid] -= attack_cost
+
+            if metrics is not None:
+                metrics.collect_agent_cost_metrics(agent, attack_cost=attack_cost)
+
+            # spawn beam in front of this agent
+            beam_locs = self.spawn_attack_beam(world)
+
+            if dynamic_layer is None:
+                continue
+
+            for (by, bx, _) in beam_locs:
+                target = (by, bx, dynamic_layer)
+                if not world.valid_location(target):
+                    continue
+
+                entity = world.observe(target)
+                if isinstance(entity, (StagResource, HareResource)):
+                    is_stag = isinstance(entity, StagResource)
+                    should_harm = (not is_stag) or getattr(agent, "can_hunt", False)
+
+                    if metrics is not None:
+                        rtype = "stag" if is_stag else "hare"
+                        metrics.collect_attack_metrics(agent, rtype, entity)
+
+                    if not should_harm:
+                        continue
+
+                    defeated = entity.on_attack(world, world.current_turn)
+                    if defeated:
+                        shared_reward = self.handle_resource_defeat(entity, world)
+                        step_rewards[aid] += shared_reward
+
+                        if metrics is not None:
+                            rtype = "stag" if is_stag else "hare"
+                            metrics.collect_resource_defeat_metrics(
+                                agent, shared_reward, rtype
+                            )
+
+            self.attack_cooldown_timer = getattr(world, "attack_cooldown", 3)
+
+
+    def handle_resource_defeat(self, resource, world: StagHuntWorld) -> float:
+        """
+        Handle reward sharing when a resource is defeated by this agent's attack beam.
+
+        Returns
+        -------
+        float
+            The reward this (attacking) agent receives immediately.
+            Other eligible agents receive the same amount via `pending_reward`.
+        """
+        sharing_radius = getattr(world, "reward_sharing_radius", 3)
+
+        # ---------- identify resource type ----------
+        if isinstance(resource, HareResource):
+            rtype = "hare"
+        elif isinstance(resource, StagResource):
+            rtype = "stag"
+        else:
+            return 0.0
+
+        # ---------- total reward (from config, like _handle_interactions) ----------
+        cfg = getattr(world, "config", None)
+        total = float(getattr(resource, "value", 0.0))
+
+        if cfg is not None:
+            if isinstance(cfg, dict):
+                wcfg = cfg.get("world", {})
+                hare_total = wcfg.get("hare_reward", None)
+                stag_total = wcfg.get("stag_reward", None)
             else:
-                for aid in group:
-                    rewards[aid] += hare_reward
-            consumed.append(loc)
+                wcfg = getattr(cfg, "world", cfg)
+                hare_total = getattr(wcfg, "hare_reward", None)
+                stag_total = getattr(wcfg, "stag_reward", None)
 
-        # --- STAG: standing with quorum gives reward (no INTERACT gating) ---
-        for (y, x, t), group in bucket.items():
-            if t != "stag":
-                continue
-            loc = (y, x, res_layer)
-            ent = self.world.observe(loc)
-            if getattr(ent, "resource_type", None) != "stag":
-                continue
+            if rtype == "hare" and hare_total is not None:
+                total = float(hare_total)
+            elif rtype == "stag" and stag_total is not None:
+                total = float(stag_total)
 
-            if len(group) >= quorum_k:
-                if share_stag_reward and len(group) > 0:
-                    per = stag_reward / len(group)
-                    for aid in group:
-                        rewards[aid] += per
-                else:
-                    for aid in group:
-                        rewards[aid] += stag_reward
-                consumed.append(loc)
+        if total == 0.0:
+            return 0.0
+
+        # ---------- find eligible agents within sharing_radius ----------
+        ry, rx = resource.location  # resource must have (y, x)
+        eligible_agents = []
+        env = getattr(world, "environment", None)
+        all_agents = getattr(env, "agents", [])
+
+        for agent in all_agents:
+            if getattr(agent, "is_removed", False):
+                continue
+            ay, ax = agent.location  # assumes all agents have .location
+            dx = abs(ay - ry)
+            dy = abs(ax - rx)
+            if max(dx, dy) <= sharing_radius:
+                eligible_agents.append(agent)
+
+        if not eligible_agents:
+            return 0.0
+
+        per_share = total / float(len(eligible_agents))
+
+        # ---------- reputation outcome (same as old _handle_interactions) ----------
+        if rtype == "stag":
+            outcome = "cooperated_stag" if len(eligible_agents) >= 2 else "solo_stag"
+        else:  # hare
+            outcome = "solo_hare" if len(eligible_agents) == 1 else "shared_hare"
+
+        metrics = getattr(env, "metrics_collector", None)
+
+        attacker_share = 0.0
+
+        for agent in eligible_agents:
+            # Inventory
+            inv = getattr(agent, "inventory", None)
+            if isinstance(inv, dict):
+                inv[rtype] = inv.get(rtype, 0) + 1
+
+            # Reputation
+            if hasattr(agent, "update_reputation_after_interaction"):
+                others = [a.agent_id for a in eligible_agents if a is not agent]
+                try:
+                    agent.update_reputation_after_interaction(
+                        other_agent_ids=others,
+                        outcome=outcome,
+                        reward=per_share,
+                    )
+                except TypeError:
+                    pass
+
+            # Reward assignment
+            if agent is self:
+                attacker_share = per_share
             else:
-                # optional: sucker payoff for failed solo stag attempts
-                for aid in group:
-                    rewards[aid] += sucker_payoff
+                agent.pending_reward = getattr(agent, "pending_reward", 0.0) + per_share
+                if metrics is not None:
+                    metrics.collect_shared_reward_metrics(agent, per_share)
 
-        # --- optional shaping ---
-        if taste_reward != 0.0:
-            flags = getattr(self, "_entered_resource_flags", None)
-            if flags:
-                for aid, entered in flags.items():
-                    if entered:
-                        rewards[aid] += taste_reward
+        # Do NOT add `total` to world.total_reward here.
+        return attacker_share
 
-        if r_step != 0.0 or r_idle != 0.0:
-            moved = getattr(self, "_moved_flags", {}) or {}
-            for aid in range(self.num_agents):
-                rewards[aid] += (r_step if moved.get(aid, False) else r_idle)
+    def spawn_attack_beam(self, world: StagHuntWorld) -> list[tuple[int, int, int]]:
+        """Generate an attack beam extending in front of the agent.
 
-        # --- consume resources ---
-        for loc in consumed:
-            self.world.add(loc, Empty())
+        Args:
+            world: The world to spawn the beam in.
+            
+        Returns:
+            List of beam locations that were spawned.
+        """
+        # Get the tiles in front of the agent
+        dy, dx = ORIENTATION_VECTORS[self.orientation]
 
-        # --- NOTE: INTERACT (action==5) should be handled in the *message* system, not here ---
-        return rewards
+        # Get beam radius from world config (default to 3 if not set)
+        beam_radius = getattr(world, "beam_radius", 3)
+        
+        # Check if single-tile beam mode or area attack mode is enabled
+        single_tile_attack = getattr(world, "single_tile_attack", False)
+        area_attack = getattr(world, "area_attack", False)
 
+        # Calculate beam locations
+        beam_locs = []
+        y, x, z = self.location
+
+        if area_attack:
+            # 3x3 area attack: covers a 3x3 region in front of the agent
+            # Calculate perpendicular vectors for left/right
+            right_dy, right_dx = -dx, dy  # 90 degrees clockwise
+            left_dy, left_dx = dx, -dy  # 90 degrees counter-clockwise
+            
+            # The 3x3 area is centered 1 tile forward from the agent
+            # Generate all 9 tiles in the 3x3 grid
+            for i in range(-1, 2):  # -1, 0, 1 (back, center, forward relative to center tile)
+                for j in range(-1, 2):  # -1, 0, 1 (left, center, right relative to center tile)
+                    # Center tile is 1 tile forward: (y + dy, x + dx)
+                    # Offset by i tiles forward and j tiles to the side
+                    target_y = y + dy + (i * dy) + (j * left_dy)
+                    target_x = x + dx + (i * dx) + (j * left_dx)
+                    target = (target_y, target_x, world.beam_layer)
+                    if world.valid_location(target):
+                        beam_locs.append(target)
+        elif single_tile_attack:
+            # Attack tiles directly in front of the agent (configurable range, default: 2)
+            attack_range = getattr(world, "attack_range", 2)
+            for i in range(1, attack_range + 1):
+                target = (y + dy * i, x + dx * i, world.beam_layer)
+                if world.valid_location(target):
+                    beam_locs.append(target)
+        else:
+            # Original multi-tile beam behavior
+            # Calculate right and left vectors by rotating 90 degrees
+            right_dy, right_dx = -dx, dy  # 90 degrees clockwise
+            left_dy, left_dx = dx, -dy  # 90 degrees counter-clockwise
+
+            # Forward beam locations
+            for i in range(1, beam_radius + 1):
+                target = (y + dy * i, x + dx * i, world.beam_layer)
+                if world.valid_location(target):
+                    beam_locs.append(target)
+
+            # Side beam locations
+            for i in range(beam_radius):
+                # Right side
+                right_target = (
+                    y + right_dy + dy * i,
+                    x + right_dx + dx * i,
+                    world.beam_layer,
+                )
+                if world.valid_location(right_target):
+                    beam_locs.append(right_target)
+
+                # Left side
+                left_target = (y + left_dy + dy * i, x + left_dx + dx * i, world.beam_layer)
+                if world.valid_location(left_target):
+                    beam_locs.append(left_target)
+
+        # Place attack beams in valid locations
+        valid_beam_locs = []
+        for loc in beam_locs:
+            terrain_loc = (loc[0], loc[1], world.terrain_layer)
+            if world.valid_location(terrain_loc) and world.map[terrain_loc].passable:
+                world.add(loc, AttackBeam())
+                valid_beam_locs.append(loc)
+        
+        return valid_beam_locs
+    
+    def apply_attack_if_any(self, world, reward: float) -> float:
+        """
+        Beam-based attack:
+        - pays attack_cost
+        - spawns beam
+        - applies on_attack to hit resources
+        - if defeated, calls handle_resource_defeat to share rewards
+        Returns the updated reward for this step.
+        """
+        # Only attack if cooldown is over
+        if getattr(self, "attack_cooldown_timer", 0) > 0:
+            # just decrement cooldown and return
+            self.attack_cooldown_timer -= 1
+            return reward
+
+        # You decide when to actually fire (e.g., if action == attack)
+        # Here we assume you have already decided to attack when calling this.
+        attack_cost = getattr(world, "attack_cost", 0.05)
+        reward -= attack_cost
+
+        # Optional: log cost metrics
+        env = getattr(world, "environment", None)
+        metrics = getattr(env, "metrics_collector", None)
+        if metrics is not None:
+            metrics.collect_agent_cost_metrics(self, attack_cost=attack_cost)
+
+        # Spawn visual beam and get beam locations (list of (y, x))
+        beam_locs = self.spawn_attack_beam(world)
+
+        dynamic_layer = getattr(world, "dynamic_layer", None)
+
+        for (by, bx) in beam_locs:
+            if dynamic_layer is None:
+                continue
+            target = (by, bx, dynamic_layer)
+            if not world.valid_location(target):
+                continue
+
+            entity = world.observe(target)
+            if isinstance(entity, (StagResource, HareResource)):
+                # Hares always vulnerable; stags only if can_hunt
+                is_stag = isinstance(entity, StagResource)
+                should_harm = (not is_stag) or getattr(self, "can_hunt", False)
+
+                # Always log attacks, even if they don't harm
+                if metrics is not None:
+                    rtype = "stag" if is_stag else "hare"
+                    metrics.collect_attack_metrics(self, rtype, entity)
+
+                if not should_harm:
+                    continue
+
+                # Apply damage
+                defeated = entity.on_attack(world, world.current_turn)
+                if defeated:
+                    # Share reward via agent-side helper
+                    shared_reward = self.handle_resource_defeat(entity, world)
+                    reward += shared_reward
+
+                    # Log resource defeat
+                    if metrics is not None:
+                        rtype = "stag" if is_stag else "hare"
+                        metrics.collect_resource_defeat_metrics(self, shared_reward, rtype)
+
+        # Reset cooldown after attacking
+        self.attack_cooldown_timer = getattr(world, "attack_cooldown", 3)
+        return reward
     # -----------------------------
     # Timers, regeneration, transitions
     # -----------------------------
@@ -499,12 +755,15 @@ class StagHuntEnv:
         obs: Dict[int, Dict[str, Any]] = {}
         for aid in range(self.num_agents):
             y, x, _ = self.agent_positions[aid]
+            agent = self.agents[aid]
             inbox = self.message_bus.inbox_for(aid) if self.message_bus else []
+            inventory = getattr(agent, "inventory", {"hare": 0, "stag": 0})
             obs[aid] = {
                 "turn": self.turn,
                 "pos": (y, x),
                 "nearby": self._get_nearby_info(aid),
                 "frozen": self.agent_frozen.get(aid, 0),
+                "inventory": inventory,
                 "inbox": inbox,
             }
         return obs
@@ -573,29 +832,21 @@ class StagHuntEnv:
     def reward_rules_from_config(config: dict) -> dict:
         w = config.get("world", {}) if isinstance(config, dict) else {}
         return {
-            "name": "staghunt_v2",
+            "name": "staghunt_beam_kill_v1",
             "params": {
-                "stag_quorum_k": int(w.get("stag_quorum_k", 2)),
-                "hare_exclusive": bool(w.get("hare_exclusive", True)),
-                "share_stag_reward": bool(w.get("share_stag_reward", False)),
-                "hare_reward": float(w.get("hare_reward", 1.0)),
+                "hare_reward": float(w.get("hare_reward", 2.0)),
                 "stag_reward": float(w.get("stag_reward", 5.0)),
-                "sucker_payoff": float(w.get("sucker_payoff", 0.0)),
-                "taste_reward": float(w.get("taste_reward", 0.0)),
-                "r_step": float(w.get("r_step", 0.0)),
-                "r_idle": float(w.get("r_idle", 0.0)),
+                "reward_sharing_radius": int(w.get("reward_sharing_radius", 3)),
             },
             "rules": [
-                "HARE: Any agent *standing* on a hare tile gains hare_reward "
-                "(exclusive winner if hare_exclusive=True; else all on tile).",
-                "STAG: Any set of agents *standing* on the same stag tile gains stag_reward "
-                f"if and only if number of agents in the group is larger than or equal to stag_quorum_k; "
-                "otherwise each may get sucker_payoff.",
-                "INTERACT (action 5) only affects **chat/message delivery**, not rewards.",
-                "Taste shaping: award taste_reward when entering a resource tile this turn (optional).",
-                "Movement shaping: add r_step if moved this turn, else r_idle (optional).",
+                "ATTACK (action 5) emits a short beam to destroy nearby HARE / STAG resources.",
+                "When a resource dies, all agents within reward_sharing_radius of the kill "
+                "receive an equal share of its total reward (hare_reward or stag_reward).",
+                "Agents do not receive rewards merely for standing on tiles; only kills matter.",
+                "Inventory counts how many hare/stag kills you participated in (within radius).",
             ],
         }
+
 
     
     def has_neighbor_within_radius(self, agent_id: int, radius: int | None = None) -> bool:
@@ -611,3 +862,8 @@ class StagHuntEnv:
                 return True
         return False
 
+    def get_agent_positions(self):
+        """
+        Returns a dict mapping agent_id -> (y, x, orientation).
+        """
+        return dict(self.agent_positions)

@@ -15,7 +15,7 @@ import os
 import json
 import time
 
-from sorrel.examples.staghunt.env import StagHuntEnv
+from sorrel.examples.staghunt.env_with_probe_test import StagHuntEnvWithProbeTest
 from sorrel.examples.staghunt.staghunt_agent import StagHuntLLMAgent
 from sorrel.examples.staghunt.staghunt_agent import create_agent_team
 from sorrel.examples.staghunt.config import create_default_staghunt_config, create_map_based_staghunt_config
@@ -24,6 +24,8 @@ from sorrel.utils.logging import TensorboardLogger
 import wandb
 from datetime import datetime
 from collections import defaultdict, deque
+from sorrel.examples.staghunt.entities import StagResource, HareResource
+from typing import Tuple
 
 
 class StagHuntRunner:
@@ -31,7 +33,7 @@ class StagHuntRunner:
 
     def __init__(
         self,
-        env: StagHuntEnv,
+        env: StagHuntEnvWithProbeTest,
         agents: List[StagHuntLLMAgent],
         run_ctx: Dict[str, Any] | None = None,
         tb: TensorboardLogger | None = None,
@@ -116,6 +118,7 @@ class StagHuntRunner:
         self.bus.reset([a.agent_id for a in self.agents])
 
         episode_rewards = {a.agent_id: 0.0 for a in self.agents}
+        prev_inventory = {aid: {"hare": 0, "stag": 0} for aid in agents}
         step_count, done = 0, False
 
         # Deliver anything queued before the first step (typically none)
@@ -229,6 +232,7 @@ class StagHuntRunner:
 
                 # FEED BACK THE ENV REWARD TO THE AGENT (this is the critical connection)
                 agent.update_with_reward(
+                    new_obs = obs.get(agent.agent_id, None),
                     reward=r,
                     done=done,
                     llm_response=llm_responses.get(agent.agent_id)
@@ -257,23 +261,12 @@ class StagHuntRunner:
             self.global_step += 1
             step_count += 1
 
-            # Simple reputation heuristic: reward-based cooperation
-            # NOTE: fix signature: update_reputation_after_interaction(other_agent_ids, outcome, reward)
-            coop_threshold = 1.0
-            coopers = [aid for aid, rv in rdict.items() if rv > coop_threshold]
-            if len(coopers) >= 2:
-                for aid in coopers:
-                    others = [o for o in coopers if o != aid]
-                    if hasattr(self.agent_dict[aid], "update_reputation_after_interaction"):
-                        try:
-                            self.agent_dict[aid].update_reputation_after_interaction(
-                                other_agent_ids=others,
-                                outcome="cooperated_stag",
-                                reward=episode_rewards[aid]
-                            )
-                        except TypeError:
-                            # If a different signature exists, just skip reputation update
-                            pass
+            # Update prev inventory snapshot for next step
+            for agent in self.agents:
+                aid = agent.agent_id
+                intv = getattr(agent, "inventory", {})
+                prev_inventory[aid]["hare"] = int(intv.get("hare", 0))
+                prev_inventory[aid]["stag"] = int(intv.get("stag", 0))
 
             # ---- phase 4: deliver messages for the next turn ----
             self._deliver_bus_now()
@@ -371,7 +364,7 @@ if __name__ == "__main__":
     )
 
     # Create environment and ensure it uses the same bus
-    env = StagHuntEnv(config, agents)
+    env = StagHuntEnvWithProbeTest(config, agents)
     env.message_bus = bus
 
     # --- W&B run context ---

@@ -124,16 +124,23 @@ class WorldConfig(ConfigMixin):
 
     # Resource parameters (Sorrel framework)
     resource_density: float = 0.05  # Probability of resource spawning in empty cells
-    taste_reward: float = 0.1  # Small reward when stepping on resource
-    destroyable_health: int = 3  # Hits needed to destroy a resource
-    respawn_lag: int = 10  # Turns before resource can respawn
+    taste_reward: float = 0.1       # Small reward when stepping on resource
+    destroyable_health: int = 3     # Hits needed to destroy a resource
+    respawn_lag: int = 10           # Turns before resource can respawn
 
-    # Interaction parameters
+    # Interaction parameters (beams etc.)
     beam_length: int = 3
     beam_radius: int = 1
     beam_cooldown: int = 3
     freeze_duration: int = 5
     respawn_delay: int = 10
+
+    # NEW: explicit radii for attacks and agent-agent interaction beams
+    attack_radius: int = 3            # max Chebyshev distance to attack stag/hare
+    interaction_radius: int = 3       # radius for interaction beams / chat
+
+    # NEW: attack cost (used in env._handle_interactions)
+    attack_cost: float = 0.05
 
     # Payoff matrix for stag hunt [row player perspective]
     payoff_matrix: List[List[int]] = field(default_factory=lambda: [[4, 0], [2, 2]])
@@ -146,11 +153,16 @@ class WorldConfig(ConfigMixin):
 
     stag_quorum_k: int = 2
     require_interact: bool = False      # primary rewards require ACTION==INTERACT
-    hare_exclusive: bool = True        # exactly one interactor gets hare
-    share_stag_reward: bool = False    # if True, split r_stag by group size
-    r_step: float = 0.0                # per move
-    r_idle: float = 0.0                # per stay
+    hare_exclusive: bool = True         # exactly one interactor gets hare
+    share_stag_reward: bool = False     # if True, split r_stag by group size
+    r_step: float = 0.0                 # per move
+    r_idle: float = 0.0                 # per stay
 
+    # NEW: health regeneration parameters for resources
+    # base rate; stag/hare can use different multipliers in their transition
+    health_regeneration_rate: float = 1.0
+    stag_regeneration_cooldown: int = 1
+    hare_regeneration_cooldown: int = 1
 
 
 @dataclass
@@ -320,6 +332,12 @@ def create_default_staghunt_config() -> ExperimentConfig:
             destroyable_health=3,
             respawn_lag=10,
             require_interact=False,
+            attack_radius=3,
+            interaction_radius=3,
+            attack_cost=0.05,
+            health_regeneration_rate=1.0,
+            stag_regeneration_cooldown=1,
+            hare_regeneration_cooldown=1,
         ),
         observation=ObservationConfig(
             vision_radius=5,
@@ -364,6 +382,12 @@ def create_map_based_staghunt_config(map_file: str = "simple_hunt.txt") -> Exper
             destroyable_health=3,
             respawn_lag=10,
             require_interact=False,
+            attack_radius=3,
+            interaction_radius=3,
+            attack_cost=0.05,
+            health_regeneration_rate=1.0,
+            stag_regeneration_cooldown=1,
+            hare_regeneration_cooldown=1,
         ),
         observation=ObservationConfig(
             vision_radius=5,
@@ -408,7 +432,13 @@ def create_competitive_staghunt_config() -> ExperimentConfig:
             taste_reward=0.1,
             destroyable_health=3,
             respawn_lag=12,
-            require_interact=False
+            require_interact=False,
+            attack_radius=3,
+            interaction_radius=3,
+            attack_cost=0.05,
+            health_regeneration_rate=1.0,
+            stag_regeneration_cooldown=1,
+            hare_regeneration_cooldown=1,
         ),
         observation=ObservationConfig(
             vision_radius=7,
@@ -462,6 +492,13 @@ def create_large_world_config(num_agents: int = 8, map_file: Optional[str] = Non
             taste_reward=0.1,
             destroyable_health=3,
             respawn_lag=15,
+            require_interact=False,
+            attack_radius=3,
+            interaction_radius=3,
+            attack_cost=0.05,
+            health_regeneration_rate=1.0,
+            stag_regeneration_cooldown=1,
+            hare_regeneration_cooldown=1,
         ),
         observation=ObservationConfig(
             vision_radius=6,
@@ -486,6 +523,7 @@ def create_large_world_config(num_agents: int = 8, map_file: Optional[str] = Non
 # --------------------------- Adapter to StagHuntWorld dict ---------------------------
 
 def get_config_dict(config: ExperimentConfig) -> Dict[str, Any]:
+    """Adapter from ExperimentConfig → dict that StagHuntWorld / StagHuntEnv expect."""
     return {
         "world": {
             "generation_mode": config.world.generation_mode,
@@ -507,5 +545,18 @@ def get_config_dict(config: ExperimentConfig) -> Dict[str, Any]:
             "stag_reward": config.world.stag_reward,
             "hare_reward": config.world.hare_reward,
             "sucker_payoff": config.world.sucker_payoff,
+            "stag_quorum_k": config.world.stag_quorum_k,
+            "require_interact": config.world.require_interact,
+            "hare_exclusive": config.world.hare_exclusive,
+            "share_stag_reward": config.world.share_stag_reward,
+            "r_step": config.world.r_step,
+            "r_idle": config.world.r_idle,
+            # NEW: beam + health parameters used in env
+            "attack_radius": config.world.attack_radius,
+            "interaction_radius": config.world.interaction_radius,
+            "attack_cost": config.world.attack_cost,
+            "health_regeneration_rate": config.world.health_regeneration_rate,
+            "stag_regeneration_cooldown": config.world.stag_regeneration_cooldown,
+            "hare_regeneration_cooldown": config.world.hare_regeneration_cooldown,
         }
     }

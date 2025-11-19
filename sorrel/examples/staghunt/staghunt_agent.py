@@ -24,7 +24,7 @@ ACTION_DESCRIPTIONS = [
     "right — move one tile to the right (east)",     # 2
     "down — move one tile downward (south)",      # 3
     "left — move one tile to the left (west)",      # 4
-    "interact - broadcast intent for coordination; does not grant reward"   # 5
+    "attack - attack resources with beam "   # 5
 ]
 
 
@@ -74,7 +74,7 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
             "right",     # 2
             "down",      # 3
             "left",      # 4
-            "interact"   # 5
+            "attack"   # 5
         ])
         
         super().__init__(
@@ -96,6 +96,15 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         # Use provided reputation or model's reputation
         self.reputation = reputation if reputation is not None else model.reputation
         self._has_neighbor_recent: bool = False
+
+        self.inventory: Dict[str, int] = {"hare": 0, "stag": 0}
+        # optional: used if you later plug in matrix-style stag-hunt interactions
+        self.ready: bool = False
+        # rewards that will be added on the agent's *next* step (for shared kill reward etc.)
+        self.pending_reward: float = 0.0
+        # whether this agent received any pending reward last step
+        self.received_interaction_reward: bool = False
+        self.orientation = 0
 
     def reset(self) -> None:
         """Reset the agent for a new episode."""
@@ -196,13 +205,13 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         
         # Add resource information
         if nearby["stag_adjacent"]:
-            lines.append("\nA STAG is adjacent! (Need 2+ agents to hunt)")
+            lines.append("\nA STAG is adjacent!")
         
         if nearby["hare_dir"]:
-            lines.append(f"A HARE is {nearby['hare_dir']} (can hunt solo for +1)")
+            lines.append(f"A HARE is {nearby['hare_dir']}")
         
         # Add action reminder
-        lines.append("\nActions: 0=stay, 1=up, 2=right, 3=down, 4=left, 5=interact")
+        lines.append("\nActions: 0=stay, 1=up, 2=right, 3=down, 4=left, 5=attack")
         
         # Add strategic context based on what we see
         if nearby["stag_adjacent"] and nearby_agents:
@@ -211,11 +220,11 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
                 # Sort by trust (highest first)
                 adjacent_agents.sort(key=lambda a: a['trust'], reverse=True)
                 agent_ids = ", ".join(str(a['id']) for a in adjacent_agents)
-                lines.append(f"TIP: You and Agent(s) {agent_ids} can cooperate on STAG for +5 each!")
-            else:
-                lines.append("TIP: STAG needs 2+ agents. Wait for ally to come closer.")
-        elif nearby["stag_adjacent"] and not nearby_agents:
-            lines.append("TIP: STAG nearby but no allies in sight. Find allies or hunt HARE.")
+                lines.append(f"TIP: You and Agent(s) {agent_ids} can cooperate on STAG")
+            # else:
+            #     lines.append("TIP: STAG needs 2+ agents. Wait for ally to come closer.")
+        # elif nearby["stag_adjacent"] and not nearby_agents:
+        #     lines.append("TIP: STAG nearby but no allies in sight. Find allies or hunt HARE.")
         
         return "\n".join(lines)
 
@@ -273,7 +282,7 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
 
         # Surface an outbound message to the bus if present
         self.current_message = getattr(self.model, "last_message", None)
-        if action == 5 and self.message_bus and self.current_message:
+        if self.message_bus and self.current_message:
             self.message_bus.queue(self.agent_id, self.current_message)
 
         return action
@@ -443,6 +452,7 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
 
     def update_with_reward(
         self,
+        new_obs: Dict[str, Any],
         reward: float,
         done: bool,
         llm_response: Optional[str] = None
@@ -473,6 +483,17 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
                     notes["confidence"] = None if conf is None else max(0, min(100, int(conf)))
             except Exception:
                 pass
+                
+        self.last_observation = new_obs
+        next_state_text = str(new_obs)
+
+        if not hasattr(self, "obs_history"):
+            self.obs_history = []
+
+        self.obs_history.append(next_state_text)
+        self.obs_history = self.obs_history[-3:]   # keep last 3 obs only
+
+        self.last_state_text = "\n".join(str(o) for o in self.obs_history)
 
         # Store experience
         self.add_memory(

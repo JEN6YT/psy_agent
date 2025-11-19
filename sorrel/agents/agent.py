@@ -107,7 +107,12 @@ class LLMAgent[W: Gridworld](Entity[W]):
         self.last_action = None
         self.last_state_text = None
         self.turn_count = 0
-        self.model.reset()
+        self.inventory = {"hare": 0, "stag": 0}
+        self.ready = False
+        self.pending_reward = 0.0
+        self.received_interaction_reward = False
+        if hasattr(self.model, "reset"):
+            self.model.reset()
 
     @abstractmethod
     def pov(self, world: W) -> str:
@@ -163,9 +168,9 @@ class LLMAgent[W: Gridworld](Entity[W]):
             ])
             parts.append(f"\nMESSAGES:\n{msg_text}")
         
-        # Available actions
-        action_desc = self.action_spec.describe_actions()
-        parts.append(f"\nAVAILABLE ACTIONS:\n{action_desc}")
+        # # Available actions
+        # action_desc = self.action_spec.describe_actions()
+        # parts.append(f"\nAVAILABLE ACTIONS:\n{action_desc}")
         
         return "\n".join(parts)
 

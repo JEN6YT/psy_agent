@@ -59,7 +59,7 @@ class MapBasedWorldGenerator:
             ValueError: If map file is empty or invalid
         """
         # Construct the full path by combining docs directory with map file name
-        docs_dir = Path(__file__).parent
+        docs_dir = Path(__file__).parent / "docs"
         full_map_path = docs_dir / self.map_file_path.name
 
         if not full_map_path.exists():
@@ -110,26 +110,32 @@ class MapBasedWorldGenerator:
         return height, width
 
     def parse_map(self) -> MapLayoutData:
+        """Parse ASCII map and return structured layout data.
+
+        Returns:
+            MapLayoutData containing all parsed map information
+
+        Raises:
+            ValueError: If map contains invalid characters
+        """
         spawn_points = []
         resource_locations = []
         wall_locations = []
         empty_locations = []
 
-        valid_chars = {"W", "P", "1", "2", "a", " "}
+        valid_chars = {"W", "P", "1", "2", "a", "A", " "}
 
         for y, row in enumerate(self.raw_map):
             for x, char in enumerate(row):
                 if char not in valid_chars:
-                    raise ValueError(f"Invalid character '{char}' at position ({y}, {x})")
+                    raise ValueError(
+                        f"Invalid character '{char}' at position ({y}, {x})"
+                    )
 
                 if char == "W":
                     wall_locations.append((y, x))
-                else:
-                    # anything that's not a wall is FLOOR underneath
-                    empty_locations.append((y, x))
-
-                # overlay entities on top of floor
-                if char == "P":
+                elif char == "P" or char == "A":
+                    # 'A' represents agent spawn points, same as 'P'
                     spawn_points.append((y, x))
                 elif char == "1":
                     resource_locations.append((y, x, "stag"))
@@ -137,6 +143,8 @@ class MapBasedWorldGenerator:
                     resource_locations.append((y, x, "hare"))
                 elif char == "a":
                     resource_locations.append((y, x, "random"))
+                elif char == " ":
+                    empty_locations.append((y, x))
 
         return MapLayoutData(
             dimensions=(self.height, self.width),
@@ -145,7 +153,6 @@ class MapBasedWorldGenerator:
             wall_locations=wall_locations,
             empty_locations=empty_locations,
         )
-
 
     def validate_map_for_agents(self, map_data: MapLayoutData, num_agents: int) -> None:
         """Validate that the map has sufficient spawn points for the number of agents.
