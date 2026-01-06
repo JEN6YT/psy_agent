@@ -20,6 +20,7 @@ from sorrel.examples.staghunt.entities import AttackBeam
 import json
 import re
 from typing import Dict, Any, List, Optional, Tuple
+from pathlib import Path
 
 ACTION_DESCRIPTIONS = [
     "stay — remain still to wait or conserve energy.",      # 0
@@ -109,10 +110,13 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         self.received_interaction_reward: bool = False
         self.orientation = 0
         self.attack_cooldown_timer = 0
+        self.max_health = getattr(config.world, "agent_health", 5)
+        self.health = self.max_health
 
     def reset(self) -> None:
         """Reset the agent for a new episode."""
         super().reset()
+        self.health = self.max_health
         # Note: message_bus.reset() should be called by the environment runner
 
     def _get_nearby_agents(self, world: StagHuntEnv) -> List[Dict[str, Any]]:

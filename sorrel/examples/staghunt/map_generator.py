@@ -58,12 +58,17 @@ class MapBasedWorldGenerator:
             FileNotFoundError: If map file doesn't exist
             ValueError: If map file is empty or invalid
         """
-        # Construct the full path by combining docs directory with map file name
-        docs_dir = Path(__file__).parent / "docs"
-        full_map_path = docs_dir / self.map_file_path.name
-
-        if not full_map_path.exists():
-            raise FileNotFoundError(f"Map file not found: {full_map_path}")
+        # Resolve map path relative to common locations.
+        candidate_paths = [
+            self.map_file_path,
+            Path(__file__).parent / self.map_file_path,
+            Path(__file__).parent / "docs" / self.map_file_path.name,
+        ]
+        full_map_path = next((p for p in candidate_paths if p.exists()), None)
+        if full_map_path is None:
+            raise FileNotFoundError(
+                f"Map file not found. Tried: {', '.join(str(p) for p in candidate_paths)}"
+            )
 
         with open(full_map_path, encoding="utf-8") as f:
             lines = f.readlines()
@@ -123,7 +128,7 @@ class MapBasedWorldGenerator:
         wall_locations = []
         empty_locations = []
 
-        valid_chars = {"W", "P", "1", "2", "a", "A", " "}
+        valid_chars = {"W", "P", "1", "2", "a", "A", " ", ".", "#"}
 
         for y, row in enumerate(self.raw_map):
             for x, char in enumerate(row):
@@ -132,7 +137,7 @@ class MapBasedWorldGenerator:
                         f"Invalid character '{char}' at position ({y}, {x})"
                     )
 
-                if char == "W":
+                if char == "W" or char == "#":
                     wall_locations.append((y, x))
                 elif char == "P" or char == "A":
                     # 'A' represents agent spawn points, same as 'P'
@@ -143,7 +148,7 @@ class MapBasedWorldGenerator:
                     resource_locations.append((y, x, "hare"))
                 elif char == "a":
                     resource_locations.append((y, x, "random"))
-                elif char == " ":
+                elif char == " " or char == ".":
                     empty_locations.append((y, x))
 
         return MapLayoutData(

@@ -67,6 +67,8 @@ class StagHuntEnv:
 
         # World
         self.world = StagHuntWorld(config, default_entity=Empty())
+        self.world.environment = self  # back-reference
+        self.world.config = config
 
         # World config
         wcfg = config.get("world", {}) if isinstance(config, dict) else {}
@@ -213,9 +215,17 @@ class StagHuntEnv:
 
             def _spawn(rt: Optional[str]) -> Any:
                 if rt == "stag":
-                    return StagResource(self.world.taste_reward, self.world.destroyable_health)
+                    return StagResource(
+                        self.world.stag_reward,
+                        self.world.stag_health,
+                        regeneration_cooldown=self.world.stag_regeneration_cooldown,
+                    )
                 if rt == "hare":
-                    return HareResource(self.world.taste_reward, self.world.destroyable_health)
+                    return HareResource(
+                        self.world.hare_reward,
+                        self.world.hare_health,
+                        regeneration_cooldown=self.world.hare_regeneration_cooldown,
+                    )
                 # random fallback
                 cls = StagResource if np.random.random() < 0.3 else HareResource
                 return cls(self.world.taste_reward, self.world.destroyable_health)
@@ -234,6 +244,7 @@ class StagHuntEnv:
         actions: {agent_id: action_id}
             0: stay, 1: up, 2: right, 3: down, 4: left, 5: attack
         """
+        self.world.current_turn = self.turn
         # initialize per-agent rewards for this step
         step_rewards: Dict[int, float] = {aid: 0.0 for aid in range(self.num_agents)}
         
@@ -416,15 +427,16 @@ class StagHuntEnv:
             agent = self.agents[aid]
 
             # cooldown check
-            if getattr(self, "attack_cooldown_timer", 0) > 0:
+            if getattr(agent, "attack_cooldown_timer", 0) > 0:
                 agent.attack_cooldown_timer -= 1
                 continue
 
-            attack_cost = getattr(world, "attack_cost", 0.05)
-            step_rewards[aid] -= attack_cost
+            if getattr(agent, "health", None) is None:
+                agent.health = getattr(world, "agent_health", 5)
+            agent.health = max(0, int(agent.health) - 1)
 
             if metrics is not None:
-                metrics.collect_agent_cost_metrics(agent, attack_cost=attack_cost)
+                metrics.collect_agent_cost_metrics(agent, attack_cost=1)
 
             # spawn beam in front of this agent
             beam_locs = agent.spawn_attack_beam(world)
@@ -528,7 +540,7 @@ class StagHuntEnv:
         for agent in all_agents:
             if getattr(agent, "is_removed", False):
                 continue
-            ay, ax = agent.location  # assumes all agents have .location
+            ay, ax, _ = agent.location  # assumes all agents have .location
             dx = abs(ay - ry)
             dy = abs(ax - rx)
             if max(dx, dy) <= sharing_radius:
@@ -669,6 +681,10 @@ class StagHuntEnv:
                 terr = self.world.observe((y, x, self.world.terrain_layer))
                 if getattr(terr, "has_transitions", False):
                     terr.transition(self.world)
+
+                dyn = self.world.observe((y, x, self.world.dynamic_layer))
+                if getattr(dyn, "has_transitions", False):
+                    dyn.transition(self.world)
 
                 beam = self.world.observe((y, x, self.world.beam_layer))
                 if getattr(beam, "has_transitions", False):

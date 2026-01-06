@@ -14,8 +14,9 @@ import numpy as np
 import os
 import json
 import time
+from pathlib import Path
 
-from sorrel.examples.staghunt.env_with_probe_test import StagHuntEnvWithProbeTest
+from sorrel.examples.staghunt.env import StagHuntEnv
 from sorrel.examples.staghunt.staghunt_agent import StagHuntLLMAgent
 from sorrel.examples.staghunt.staghunt_agent import create_agent_team
 from sorrel.examples.staghunt.config import create_default_staghunt_config, create_map_based_staghunt_config
@@ -27,13 +28,19 @@ from collections import defaultdict, deque
 from sorrel.examples.staghunt.entities import StagResource, HareResource
 from typing import Tuple
 
+ORIENT_TO_FACING = {
+    0: "back",   # north
+    1: "right",  # east
+    2: "front",  # south
+    3: "left",   # west
+}
 
 class StagHuntRunner:
     """Runner for managing StagHunt with LLM agents + MessageBus + Reputation + W&B + TensorBoard."""
 
     def __init__(
         self,
-        env: StagHuntEnvWithProbeTest,
+        env: StagHuntEnv,
         agents: List[StagHuntLLMAgent],
         run_ctx: Dict[str, Any] | None = None,
         tb: TensorboardLogger | None = None,
@@ -118,7 +125,7 @@ class StagHuntRunner:
         self.bus.reset([a.agent_id for a in self.agents])
 
         episode_rewards = {a.agent_id: 0.0 for a in self.agents}
-        prev_inventory = {agent.agent_id: {"hare": 0, "stag": 0} for agent in agents}
+        prev_inventory = {agent.agent_id: {"hare": 0, "stag": 0} for agent in self.agents}
         step_count, done = 0, False
 
         # Deliver anything queued before the first step (typically none)
@@ -193,6 +200,8 @@ class StagHuntRunner:
                         "MESSAGE": lp.get("MESSAGE"),
                         "CONFIDENCE": lp.get("CONFIDENCE"),
                     }
+            frame_rewards = {str(aid): float(rewards.get(aid, 0.0)) for aid in ordered_ids}
+
 
             # Trace frame (positions/resources/messages/reasoning)
             trace.append({
@@ -200,11 +209,15 @@ class StagHuntRunner:
                 "agents": [
                     {"id": a.agent_id,
                     "y": int(positions[a.agent_id][0]),
-                    "x": int(positions[a.agent_id][1])}
+                    "x": int(positions[a.agent_id][1]),
+                    "facing": ORIENT_TO_FACING.get(int(getattr(a, "orientation", 2)), "front"),
+                    }
                     for a in self.agents
                 ],
                 "hares": [{"y": int(y), "x": int(x)} for (y, x) in self.env.hare_positions()],
                 "stags": [{"y": int(y), "x": int(x)} for (y, x) in self.env.stag_positions()],
+                "actions": {str(aid): int(actions[aid]) for aid in ordered_ids},
+                "rewards": frame_rewards,
                 "messages": frame_messages,
                 "reasoning": reasoning,
             })
@@ -239,23 +252,23 @@ class StagHuntRunner:
                 )
 
             # World/chat signals (may be absent; default to 0)
-            hares = info.get("hares", 0) if isinstance(info, dict) else 0
-            stag_success = info.get("stag_success", 0) if isinstance(info, dict) else 0
-            stag_participants = info.get("stag_participants", 0) if isinstance(info, dict) else 0
-            messages_sent = info.get("messages_sent", 0) if isinstance(info, dict) else len(frame_messages)
+            # hares = info.get("hares", 0) if isinstance(info, dict) else 0
+            # stag_success = info.get("stag_success", 0) if isinstance(info, dict) else 0
+            # stag_participants = info.get("stag_participants", 0) if isinstance(info, dict) else 0
+            # messages_sent = info.get("messages_sent", 0) if isinstance(info, dict) else len(frame_messages)
 
-            wb_step_log["world/hares_step"] = hares
-            wb_step_log["world/stag_success_step"] = stag_success
-            wb_step_log["world/stag_participants_step"] = stag_participants
-            wb_step_log["chat/messages_sent_step"] = messages_sent
+            # wb_step_log["world/hares_step"] = hares
+            # wb_step_log["world/stag_success_step"] = stag_success
+            # wb_step_log["world/stag_participants_step"] = stag_participants
+            # wb_step_log["chat/messages_sent_step"] = messages_sent
             wb_step_log["world/total_reward_step"] = total_step_reward
 
             # W&B & TB logging
             wandb.log(wb_step_log, step=self.global_step)
-            self.tb.writer.add_scalar("world/hares_step", hares, self.global_step)
-            self.tb.writer.add_scalar("world/stag_success_step", stag_success, self.global_step)
-            self.tb.writer.add_scalar("world/stag_participants_step", stag_participants, self.global_step)
-            self.tb.writer.add_scalar("chat/messages_sent_step", messages_sent, self.global_step)
+            # self.tb.writer.add_scalar("world/hares_step", hares, self.global_step)
+            # self.tb.writer.add_scalar("world/stag_success_step", stag_success, self.global_step)
+            # self.tb.writer.add_scalar("world/stag_participants_step", stag_participants, self.global_step)
+            # self.tb.writer.add_scalar("chat/messages_sent_step", messages_sent, self.global_step)
             self.tb.writer.add_scalar("world/total_reward_step", total_step_reward, self.global_step)
 
             self.global_step += 1
@@ -302,10 +315,10 @@ class StagHuntRunner:
             loss=0.0,  # set real loss if you have training
             reward=total_reward,
             epsilon=0.0,
-            hares=hares,
-            stag_success=stag_success,
-            stag_participants=stag_participants,
-            messages_sent=messages_sent,
+            # hares=hares,
+            # stag_success=stag_success,
+            # stag_participants=stag_participants,
+            # messages_sent=messages_sent,
             episode_return=total_reward,
         )
 
@@ -346,7 +359,8 @@ class StagHuntRunner:
 # ------------- Example usage -------------
 if __name__ == "__main__":
     # Create configuration
-    config = create_map_based_staghunt_config(map_file="map.txt")
+    map_path = Path(__file__).with_name("map.txt")
+    config = create_map_based_staghunt_config(map_file=str(map_path))
     # INTERACT is for chat; rewards should not require INTERACT
     if hasattr(config, "world"):
         config.world.max_turns = 50
@@ -357,14 +371,14 @@ if __name__ == "__main__":
 
     # Create team of N agents with shared MessageBus and Reputation
     agents, bus, rep = create_agent_team(
-        num_agents=6,
+        num_agents=2,
         model_name="Qwen/Qwen2.5-0.5B-Instruct",
         config=config,
         verbose=True
     )
 
     # Create environment and ensure it uses the same bus
-    env = StagHuntEnvWithProbeTest(config, agents)
+    env = StagHuntEnv(config.to_dict(), agents)
     env.message_bus = bus
 
     # --- W&B run context ---

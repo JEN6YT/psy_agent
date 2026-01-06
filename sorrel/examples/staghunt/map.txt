@@ -1,17 +1,7 @@
-WWWWWWWWWWWWWWWWW
-W   P   1    2  W
-W               W
-W  WWWW   W     W
-W    W    W  P  W
-W  P W       1  W
-W    W 2   W    W
-W  WWWW   W W   W
-W         W W   W
-W   1         2 W
-W   W W   WWWW  W
-W   W W 2 W     W
-W   W W   W  1  W
-W     W      P  W
-W 2        1    W
-W   P           W
-WWWWWWWWWWWWWWWWW
+############
+#P....2....#
+#....##....#
+#....1.....#
+#....##....#
+#....2....P#
+############

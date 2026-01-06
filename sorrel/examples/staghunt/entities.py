@@ -210,6 +210,7 @@ class Resource(Entity["StagHuntWorld"]):
         # Resources are not passable - agents must attack them
         self.passable = False
         self.health = max_health
+        self.max_health = max_health
         self.value = taste_reward
 
         self.regeneration_rate = regeneration_rate
@@ -389,6 +390,7 @@ class InteractionBeam(Beam):
         super().__init__()
         self.sender_id = sender_id
         self.message = message or ""
+        self.sprite = Path(__file__).parent / "./assets/beam.png"  # Could use different sprite
         self.passable = True   # important: beam never blocks movement
 
     def transition(self, world):

@@ -136,9 +136,9 @@ class StagHuntWorld(Gridworld):
         ]
         
         # New health system parameters
-        self.stag_health: int = int(get_world_param("stag_health", 12))
+        self.stag_health: int = int(get_world_param("stag_health", 6))
         self.hare_health: int = int(get_world_param("hare_health", 3))
-        self.agent_health: int = int(get_world_param("agent_health", 5))
+        self.agent_health: int = int(get_world_param("agent_health", 12))
         self.health_regeneration_rate: float = float(get_world_param("health_regeneration_rate", 0.1))
         self.stag_regeneration_cooldown: int = int(get_world_param("stag_regeneration_cooldown", 1))
         self.hare_regeneration_cooldown: int = int(get_world_param("hare_regeneration_cooldown", 1))
