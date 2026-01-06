@@ -13,20 +13,20 @@
 
 ## Response Format
 Return only valid JSON following this structure:
-{
+{{
   "REASONING": "string (1–2 concise sentences)",
   "ACTION": number,        // integer action id from {action_table}
   "MESSAGE": "string",     // "" if no nearby ally
   "CONFIDENCE": number     // integer 0–100
-}
+}}
 
 For instance,
-{
+{{
   "REASONING": "Agent 1 is adjacent and has cooperated before, so I will attempt to hunt the stag together.",
   "ACTION": 5,
   "MESSAGE": "Let's cooperate on the stag!",
   "CONFIDENCE": 85
-}
+}}
 
 ## Constraints
 - Only include a MESSAGE if another agent is within observation range. The observation includes nearby.ally_adjacent (true/false). If nearby.ally_adjacent is false (no nearby agents), set MESSAGE to "" (empty string).

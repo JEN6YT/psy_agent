@@ -236,6 +236,12 @@ class StagHuntEnv:
         """
         # initialize per-agent rewards for this step
         step_rewards: Dict[int, float] = {aid: 0.0 for aid in range(self.num_agents)}
+        
+        for agent in self.agents:
+            pr = getattr(agent, "pending_reward", 0.0)
+            if pr != 0.0:
+                step_rewards[agent.agent_id] += pr
+                agent.pending_reward = 0.0  
 
         # Movement (also sets movement/entry flags)
         self._handle_movement(actions)
@@ -411,7 +417,7 @@ class StagHuntEnv:
 
             # cooldown check
             if getattr(self, "attack_cooldown_timer", 0) > 0:
-                self.attack_cooldown_timer -= 1
+                agent.attack_cooldown_timer -= 1
                 continue
 
             attack_cost = getattr(world, "attack_cost", 0.05)
@@ -421,7 +427,7 @@ class StagHuntEnv:
                 metrics.collect_agent_cost_metrics(agent, attack_cost=attack_cost)
 
             # spawn beam in front of this agent
-            beam_locs = self.spawn_attack_beam(world)
+            beam_locs = agent.spawn_attack_beam(world)
 
             if dynamic_layer is None:
                 continue
@@ -445,7 +451,7 @@ class StagHuntEnv:
 
                     defeated = entity.on_attack(world, world.current_turn)
                     if defeated:
-                        shared_reward = self.handle_resource_defeat(entity, world)
+                        shared_reward = self.handle_resource_defeat(agent, entity, world)
                         step_rewards[aid] += shared_reward
 
                         if metrics is not None:
@@ -454,10 +460,10 @@ class StagHuntEnv:
                                 agent, shared_reward, rtype
                             )
 
-            self.attack_cooldown_timer = getattr(world, "attack_cooldown", 3)
+            agent.attack_cooldown_timer = getattr(world, "attack_cooldown", 3)
 
 
-    def handle_resource_defeat(self, resource, world: StagHuntWorld) -> float:
+    def handle_resource_defeat(self, attacker, resource, world: StagHuntWorld) -> float:
         """
         Handle reward sharing when a resource is defeated by this agent's attack beam.
 
@@ -500,7 +506,21 @@ class StagHuntEnv:
             return 0.0
 
         # ---------- find eligible agents within sharing_radius ----------
-        ry, rx = resource.location  # resource must have (y, x)
+        loc = getattr(resource, "location", None)
+        if loc is None:
+            raise ValueError("Resource has no location")
+
+        # Allow (y, x) or (y, x, layer)
+        if isinstance(loc, tuple):
+            if len(loc) == 2:
+                ry, rx = loc
+                layer = getattr(world, "dynamic_layer", 0)
+            elif len(loc) == 3:
+                ry, rx, layer = loc
+            else:
+                raise ValueError(f"Unexpected resource.location length: {len(loc)}")
+        else:
+            raise TypeError(f"Unexpected type for resource.location: {type(loc)}")
         eligible_agents = []
         env = getattr(world, "environment", None)
         all_agents = getattr(env, "agents", [])
@@ -548,7 +568,7 @@ class StagHuntEnv:
                     pass
 
             # Reward assignment
-            if agent is self:
+            if agent is attacker:
                 attacker_share = per_share
             else:
                 agent.pending_reward = getattr(agent, "pending_reward", 0.0) + per_share
@@ -557,159 +577,74 @@ class StagHuntEnv:
 
         # Do NOT add `total` to world.total_reward here.
         return attacker_share
-
-    def spawn_attack_beam(self, world: StagHuntWorld) -> list[tuple[int, int, int]]:
-        """Generate an attack beam extending in front of the agent.
-
-        Args:
-            world: The world to spawn the beam in.
-            
-        Returns:
-            List of beam locations that were spawned.
-        """
-        # Get the tiles in front of the agent
-        dy, dx = ORIENTATION_VECTORS[self.orientation]
-
-        # Get beam radius from world config (default to 3 if not set)
-        beam_radius = getattr(world, "beam_radius", 3)
-        
-        # Check if single-tile beam mode or area attack mode is enabled
-        single_tile_attack = getattr(world, "single_tile_attack", False)
-        area_attack = getattr(world, "area_attack", False)
-
-        # Calculate beam locations
-        beam_locs = []
-        y, x, z = self.location
-
-        if area_attack:
-            # 3x3 area attack: covers a 3x3 region in front of the agent
-            # Calculate perpendicular vectors for left/right
-            right_dy, right_dx = -dx, dy  # 90 degrees clockwise
-            left_dy, left_dx = dx, -dy  # 90 degrees counter-clockwise
-            
-            # The 3x3 area is centered 1 tile forward from the agent
-            # Generate all 9 tiles in the 3x3 grid
-            for i in range(-1, 2):  # -1, 0, 1 (back, center, forward relative to center tile)
-                for j in range(-1, 2):  # -1, 0, 1 (left, center, right relative to center tile)
-                    # Center tile is 1 tile forward: (y + dy, x + dx)
-                    # Offset by i tiles forward and j tiles to the side
-                    target_y = y + dy + (i * dy) + (j * left_dy)
-                    target_x = x + dx + (i * dx) + (j * left_dx)
-                    target = (target_y, target_x, world.beam_layer)
-                    if world.valid_location(target):
-                        beam_locs.append(target)
-        elif single_tile_attack:
-            # Attack tiles directly in front of the agent (configurable range, default: 2)
-            attack_range = getattr(world, "attack_range", 2)
-            for i in range(1, attack_range + 1):
-                target = (y + dy * i, x + dx * i, world.beam_layer)
-                if world.valid_location(target):
-                    beam_locs.append(target)
-        else:
-            # Original multi-tile beam behavior
-            # Calculate right and left vectors by rotating 90 degrees
-            right_dy, right_dx = -dx, dy  # 90 degrees clockwise
-            left_dy, left_dx = dx, -dy  # 90 degrees counter-clockwise
-
-            # Forward beam locations
-            for i in range(1, beam_radius + 1):
-                target = (y + dy * i, x + dx * i, world.beam_layer)
-                if world.valid_location(target):
-                    beam_locs.append(target)
-
-            # Side beam locations
-            for i in range(beam_radius):
-                # Right side
-                right_target = (
-                    y + right_dy + dy * i,
-                    x + right_dx + dx * i,
-                    world.beam_layer,
-                )
-                if world.valid_location(right_target):
-                    beam_locs.append(right_target)
-
-                # Left side
-                left_target = (y + left_dy + dy * i, x + left_dx + dx * i, world.beam_layer)
-                if world.valid_location(left_target):
-                    beam_locs.append(left_target)
-
-        # Place attack beams in valid locations
-        valid_beam_locs = []
-        for loc in beam_locs:
-            terrain_loc = (loc[0], loc[1], world.terrain_layer)
-            if world.valid_location(terrain_loc) and world.map[terrain_loc].passable:
-                world.add(loc, AttackBeam())
-                valid_beam_locs.append(loc)
-        
-        return valid_beam_locs
     
-    def apply_attack_if_any(self, world, reward: float) -> float:
-        """
-        Beam-based attack:
-        - pays attack_cost
-        - spawns beam
-        - applies on_attack to hit resources
-        - if defeated, calls handle_resource_defeat to share rewards
-        Returns the updated reward for this step.
-        """
-        # Only attack if cooldown is over
-        if getattr(self, "attack_cooldown_timer", 0) > 0:
-            # just decrement cooldown and return
-            self.attack_cooldown_timer -= 1
-            return reward
+    # def apply_attack_if_any(self, world, reward: float) -> float:
+    #     """
+    #     Beam-based attack:
+    #     - pays attack_cost
+    #     - spawns beam
+    #     - applies on_attack to hit resources
+    #     - if defeated, calls handle_resource_defeat to share rewards
+    #     Returns the updated reward for this step.
+    #     """
+    #     # Only attack if cooldown is over
+    #     if getattr(self, "attack_cooldown_timer", 0) > 0:
+    #         # just decrement cooldown and return
+    #         self.attack_cooldown_timer -= 1
+    #         return reward
 
-        # You decide when to actually fire (e.g., if action == attack)
-        # Here we assume you have already decided to attack when calling this.
-        attack_cost = getattr(world, "attack_cost", 0.05)
-        reward -= attack_cost
+    #     # You decide when to actually fire (e.g., if action == attack)
+    #     # Here we assume you have already decided to attack when calling this.
+    #     attack_cost = getattr(world, "attack_cost", 0.05)
+    #     reward -= attack_cost
 
-        # Optional: log cost metrics
-        env = getattr(world, "environment", None)
-        metrics = getattr(env, "metrics_collector", None)
-        if metrics is not None:
-            metrics.collect_agent_cost_metrics(self, attack_cost=attack_cost)
+    #     # Optional: log cost metrics
+    #     env = getattr(world, "environment", None)
+    #     metrics = getattr(env, "metrics_collector", None)
+    #     if metrics is not None:
+    #         metrics.collect_agent_cost_metrics(self, attack_cost=attack_cost)
 
-        # Spawn visual beam and get beam locations (list of (y, x))
-        beam_locs = self.spawn_attack_beam(world)
+    #     # Spawn visual beam and get beam locations (list of (y, x))
+    #     beam_locs = self.spawn_attack_beam(world)
 
-        dynamic_layer = getattr(world, "dynamic_layer", None)
+    #     dynamic_layer = getattr(world, "dynamic_layer", None)
 
-        for (by, bx) in beam_locs:
-            if dynamic_layer is None:
-                continue
-            target = (by, bx, dynamic_layer)
-            if not world.valid_location(target):
-                continue
+    #     for (by, bx) in beam_locs:
+    #         if dynamic_layer is None:
+    #             continue
+    #         target = (by, bx, dynamic_layer)
+    #         if not world.valid_location(target):
+    #             continue
 
-            entity = world.observe(target)
-            if isinstance(entity, (StagResource, HareResource)):
-                # Hares always vulnerable; stags only if can_hunt
-                is_stag = isinstance(entity, StagResource)
-                should_harm = (not is_stag) or getattr(self, "can_hunt", False)
+    #         entity = world.observe(target)
+    #         if isinstance(entity, (StagResource, HareResource)):
+    #             # Hares always vulnerable; stags only if can_hunt
+    #             is_stag = isinstance(entity, StagResource)
+    #             should_harm = (not is_stag) or getattr(self, "can_hunt", False)
 
-                # Always log attacks, even if they don't harm
-                if metrics is not None:
-                    rtype = "stag" if is_stag else "hare"
-                    metrics.collect_attack_metrics(self, rtype, entity)
+    #             # Always log attacks, even if they don't harm
+    #             if metrics is not None:
+    #                 rtype = "stag" if is_stag else "hare"
+    #                 metrics.collect_attack_metrics(self, rtype, entity)
 
-                if not should_harm:
-                    continue
+    #             if not should_harm:
+    #                 continue
 
-                # Apply damage
-                defeated = entity.on_attack(world, world.current_turn)
-                if defeated:
-                    # Share reward via agent-side helper
-                    shared_reward = self.handle_resource_defeat(entity, world)
-                    reward += shared_reward
+    #             # Apply damage
+    #             defeated = entity.on_attack(world, world.current_turn)
+    #             if defeated:
+    #                 # Share reward via agent-side helper
+    #                 shared_reward = self.handle_resource_defeat(entity, world)
+    #                 reward += shared_reward
 
-                    # Log resource defeat
-                    if metrics is not None:
-                        rtype = "stag" if is_stag else "hare"
-                        metrics.collect_resource_defeat_metrics(self, shared_reward, rtype)
+    #                 # Log resource defeat
+    #                 if metrics is not None:
+    #                     rtype = "stag" if is_stag else "hare"
+    #                     metrics.collect_resource_defeat_metrics(self, shared_reward, rtype)
 
-        # Reset cooldown after attacking
-        self.attack_cooldown_timer = getattr(world, "attack_cooldown", 3)
-        return reward
+    #     # Reset cooldown after attacking
+    #     self.attack_cooldown_timer = getattr(world, "attack_cooldown", 3)
+    #     return reward
     # -----------------------------
     # Timers, regeneration, transitions
     # -----------------------------

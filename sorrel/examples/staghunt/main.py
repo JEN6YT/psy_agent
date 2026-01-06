@@ -118,7 +118,7 @@ class StagHuntRunner:
         self.bus.reset([a.agent_id for a in self.agents])
 
         episode_rewards = {a.agent_id: 0.0 for a in self.agents}
-        prev_inventory = {aid: {"hare": 0, "stag": 0} for aid in agents}
+        prev_inventory = {agent.agent_id: {"hare": 0, "stag": 0} for agent in agents}
         step_count, done = 0, False
 
         # Deliver anything queued before the first step (typically none)
