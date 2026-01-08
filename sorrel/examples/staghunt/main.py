@@ -283,6 +283,10 @@ class StagHuntRunner:
                 ],
                 "hares": [{"y": int(y), "x": int(x)} for (y, x) in self.env.hare_positions()],
                 "stags": [{"y": int(y), "x": int(x)} for (y, x) in self.env.stag_positions()],
+                "beams": [
+                    {"y": int(y), "x": int(x), "kind": kind}
+                    for (y, x, kind) in self.env.beam_positions()
+                ],
                 "actions": {str(aid): int(actions[aid]) for aid in ordered_ids},
                 "rewards": frame_rewards,
                 "messages": frame_messages,

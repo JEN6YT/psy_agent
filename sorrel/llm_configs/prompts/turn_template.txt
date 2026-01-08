@@ -31,7 +31,7 @@ For instance,
 ## Constraints
 - Only include a MESSAGE if another agent is within observation range. The observation includes nearby.ally_adjacent (true/false). If nearby.ally_adjacent is false (no nearby agents), set MESSAGE to "" (empty string).
 - Keep MESSAGE within 5 words.
-- Only choose ATTACK (ACTION 5) if a HARE/STAG is adjacent or you are on one. For STAG, prefer ATTACK when an ally is adjacent or clearly signaling cooperation.
+- Only choose ATTACK (ACTION 5) if a HARE/STAG is within beam radius. For STAG, prefer ATTACK when an ally is nearby or clearly signaling cooperation.
 - Use only information provided in Observation, Recent Messages and History, Reputation.
 - Do not invent entities or actions. Return JSON only.
 

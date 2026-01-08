@@ -87,6 +87,7 @@ def default_sprite_paths() -> Dict[str, str]:
         "wall": "sorrel/examples/staghunt/assets/wall.png",
         "hare": "sorrel/examples/staghunt/assets/hare.png",
         "stag": "sorrel/examples/staghunt/assets/stag.png",
+        "beam": "sorrel/examples/staghunt/assets/beam.png",
         # optional overlays could go here later
     }
 
@@ -256,6 +257,16 @@ class Renderer:
                 canvas.alpha_composite(
                     self.sprites["stag"],
                     (_safe_int(s.get("x", 0)) * self.tile, _safe_int(s.get("y", 0)) * self.tile),
+                )
+
+        # 2.5) beams
+        for b in frame.get("beams", []):
+            if b.get("kind") != "attack":
+                continue
+            if "beam" in self.sprites:
+                canvas.alpha_composite(
+                    self.sprites["beam"],
+                    (_safe_int(b.get("x", 0)) * self.tile, _safe_int(b.get("y", 0)) * self.tile),
                 )
 
         # index agent positions for bubbles/panel

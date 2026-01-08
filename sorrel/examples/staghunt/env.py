@@ -27,6 +27,7 @@ from sorrel.examples.staghunt.map_generator import MapBasedWorldGenerator
 from sorrel.llm_configs.communication.message_bus import MessageBus
 from sorrel.llm_configs.communication.reputation import Reputation
 from sorrel.examples.staghunt.entities import AttackBeam
+from sorrel.examples.staghunt.entities import InteractionBeam, PunishBeam
 
 ORIENTATION_VECTORS: Dict[int, Tuple[int, int]] = {
     0: (-1, 0),  # north (up)
@@ -53,8 +54,7 @@ class StagHuntEnv:
       - HARE: exclusive safe payoff to a single interactor (hare_exclusive=True)
       - STAG: quorum_k+ interactors on same tile get stag_reward each
       - Lone stag attempt → sucker_payoff
-      - Taste shaping on entry to resource (taste_reward)
-      - Movement shaping r_step (if moved) / r_idle (if not)
+      - No movement/taste shaping; rewards are from successful kills only
     """
 
     # -----------------------------
@@ -292,7 +292,10 @@ class StagHuntEnv:
         if not (0 <= y < self.world.height and 0 <= x < self.world.width):
             return False
         terrain = self.world.observe((y, x, self.world.terrain_layer))
-        return bool(getattr(terrain, "passable", False))
+        dynamic = self.world.observe((y, x, self.world.dynamic_layer))
+        return bool(getattr(terrain, "passable", False)) and bool(
+            getattr(dynamic, "passable", False)
+        )
 
     def _nearest_passable(self, y0: int, x0: int) -> Tuple[int, int]:
         """BFS to the closest non-wall tile."""
@@ -421,11 +424,39 @@ class StagHuntEnv:
         metrics = getattr(env, "metrics_collector", None)
         dynamic_layer = getattr(world, "dynamic_layer", None)
 
+        attackers_by_resource: Dict[int, set[int]] = {}
+
         for aid, act in actions.items():
             if act != 5:
                 continue  # not ATTACK
 
             agent = self.agents[aid]
+            def _apply_attack(entity) -> None:
+                if not isinstance(entity, (StagResource, HareResource)):
+                    return
+                is_stag = isinstance(entity, StagResource)
+                should_harm = (not is_stag) or getattr(agent, "can_hunt", False)
+
+                if metrics is not None:
+                    rtype = "stag" if is_stag else "hare"
+                    metrics.collect_attack_metrics(agent, rtype, entity)
+
+                if not should_harm:
+                    return
+
+                attackers_by_resource.setdefault(id(entity), set()).add(agent.agent_id)
+                defeated = entity.on_attack(world, world.current_turn)
+                if defeated:
+                    attackers = attackers_by_resource.get(id(entity), {agent.agent_id})
+                    reward_map = self.handle_resource_defeat(attackers, entity, world)
+                    for rid, amount in reward_map.items():
+                        step_rewards[rid] += amount
+
+                    if metrics is not None:
+                        rtype = "stag" if is_stag else "hare"
+                        metrics.collect_resource_defeat_metrics(
+                            agent, reward_map.get(agent.agent_id, 0.0), rtype
+                        )
 
             # cooldown check
             if getattr(agent, "attack_cooldown_timer", 0) > 0:
@@ -450,51 +481,32 @@ class StagHuntEnv:
                 if not world.valid_location(target):
                     continue
 
-                entity = world.observe(target)
-                if isinstance(entity, (StagResource, HareResource)):
-                    is_stag = isinstance(entity, StagResource)
-                    should_harm = (not is_stag) or getattr(agent, "can_hunt", False)
-
-                    if metrics is not None:
-                        rtype = "stag" if is_stag else "hare"
-                        metrics.collect_attack_metrics(agent, rtype, entity)
-
-                    if not should_harm:
-                        continue
-
-                    defeated = entity.on_attack(world, world.current_turn)
-                    if defeated:
-                        shared_reward = self.handle_resource_defeat(agent, entity, world)
-                        step_rewards[aid] += shared_reward
-
-                        if metrics is not None:
-                            rtype = "stag" if is_stag else "hare"
-                            metrics.collect_resource_defeat_metrics(
-                                agent, shared_reward, rtype
-                            )
+                _apply_attack(world.observe(target))
 
             agent.attack_cooldown_timer = getattr(world, "attack_cooldown", 3)
 
 
-    def handle_resource_defeat(self, attacker, resource, world: StagHuntWorld) -> float:
+    def handle_resource_defeat(
+        self,
+        attackers: set[int],
+        resource,
+        world: StagHuntWorld,
+    ) -> Dict[int, float]:
         """
         Handle reward sharing when a resource is defeated by this agent's attack beam.
 
         Returns
         -------
-        float
-            The reward this (attacking) agent receives immediately.
-            Other eligible agents receive the same amount via `pending_reward`.
+        Dict[int, float]
+            Mapping of attacker_id -> reward share for this kill.
         """
-        sharing_radius = getattr(world, "reward_sharing_radius", 3)
-
         # ---------- identify resource type ----------
         if isinstance(resource, HareResource):
             rtype = "hare"
         elif isinstance(resource, StagResource):
             rtype = "stag"
         else:
-            return 0.0
+            return {}
 
         # ---------- total reward (from config, like _handle_interactions) ----------
         cfg = getattr(world, "config", None)
@@ -516,61 +528,36 @@ class StagHuntEnv:
                 total = float(stag_total)
 
         if total == 0.0:
-            return 0.0
+            return {}
 
-        # ---------- find eligible agents within sharing_radius ----------
-        loc = getattr(resource, "location", None)
-        if loc is None:
-            raise ValueError("Resource has no location")
+        if not attackers:
+            return {}
 
-        # Allow (y, x) or (y, x, layer)
-        if isinstance(loc, tuple):
-            if len(loc) == 2:
-                ry, rx = loc
-                layer = getattr(world, "dynamic_layer", 0)
-            elif len(loc) == 3:
-                ry, rx, layer = loc
-            else:
-                raise ValueError(f"Unexpected resource.location length: {len(loc)}")
-        else:
-            raise TypeError(f"Unexpected type for resource.location: {type(loc)}")
-        eligible_agents = []
-        env = getattr(world, "environment", None)
-        all_agents = getattr(env, "agents", [])
-
-        for agent in all_agents:
-            if getattr(agent, "is_removed", False):
-                continue
-            ay, ax, _ = agent.location  # assumes all agents have .location
-            dx = abs(ay - ry)
-            dy = abs(ax - rx)
-            if max(dx, dy) <= sharing_radius:
-                eligible_agents.append(agent)
-
-        if not eligible_agents:
-            return 0.0
-
-        per_share = total / float(len(eligible_agents))
+        per_share = total / float(len(attackers))
 
         # ---------- reputation outcome (same as old _handle_interactions) ----------
         if rtype == "stag":
-            outcome = "cooperated_stag" if len(eligible_agents) >= 2 else "solo_stag"
+            outcome = "cooperated_stag" if len(attackers) >= 2 else "solo_stag"
         else:  # hare
-            outcome = "solo_hare" if len(eligible_agents) == 1 else "shared_hare"
+            outcome = "solo_hare" if len(attackers) == 1 else "shared_hare"
 
         metrics = getattr(env, "metrics_collector", None)
 
-        attacker_share = 0.0
+        reward_map: Dict[int, float] = {}
 
-        for agent in eligible_agents:
+        env = getattr(world, "environment", None)
+        for agent in getattr(env, "agents", []):
             # Inventory
             inv = getattr(agent, "inventory", None)
             if isinstance(inv, dict):
-                inv[rtype] = inv.get(rtype, 0) + 1
+                if agent.agent_id in attackers:
+                    inv[rtype] = inv.get(rtype, 0) + 1
 
             # Reputation
             if hasattr(agent, "update_reputation_after_interaction"):
-                others = [a.agent_id for a in eligible_agents if a is not agent]
+                if agent.agent_id not in attackers:
+                    continue
+                others = [aid for aid in attackers if aid != agent.agent_id]
                 try:
                     agent.update_reputation_after_interaction(
                         other_agent_ids=others,
@@ -581,15 +568,13 @@ class StagHuntEnv:
                     pass
 
             # Reward assignment
-            if agent is attacker:
-                attacker_share = per_share
-            else:
-                agent.pending_reward = getattr(agent, "pending_reward", 0.0) + per_share
-                if metrics is not None:
+            if agent.agent_id in attackers:
+                reward_map[agent.agent_id] = per_share
+                if metrics is not None and agent.agent_id != next(iter(attackers)):
                     metrics.collect_shared_reward_metrics(agent, per_share)
 
         # Do NOT add `total` to world.total_reward here.
-        return attacker_share
+        return reward_map
     
     # def apply_attack_if_any(self, world, reward: float) -> float:
     #     """
@@ -834,6 +819,19 @@ class StagHuntEnv:
                     out.append((y, x))
         return out
 
+    def beam_positions(self) -> List[Tuple[int, int, str]]:
+        out = []
+        for y in range(self.world.height):
+            for x in range(self.world.width):
+                ent = self.world.observe((y, x, self.world.beam_layer))
+                if isinstance(ent, AttackBeam):
+                    out.append((y, x, "attack"))
+                elif isinstance(ent, PunishBeam):
+                    out.append((y, x, "punish"))
+                elif isinstance(ent, InteractionBeam):
+                    out.append((y, x, "interaction"))
+        return out
+
     def reward_rules_json(self) -> dict:
         return StagHuntEnv.reward_rules_from_config(self.config)
 
@@ -846,14 +844,14 @@ class StagHuntEnv:
             "params": {
                 "hare_reward": float(w.get("hare_reward", 2.0)),
                 "stag_reward": float(w.get("stag_reward", 5.0)),
-                "reward_sharing_radius": int(w.get("reward_sharing_radius", 3)),
             },
             "rules": [
                 "ATTACK (action 5) emits a short beam to destroy nearby HARE / STAG resources.",
-                "When a resource dies, all agents within reward_sharing_radius of the kill "
-                "receive an equal share of its total reward (hare_reward or stag_reward).",
-                "Agents do not receive rewards merely for standing on tiles; only kills matter.",
-                "Inventory counts how many hare/stag kills you participated in (within radius).",
+                "You can only gain reward by ATTACK, which fires a beam forward in your current orientation.",
+                "When a resource dies, all agents who attacked it that turn receive an "
+                "equal share of its total reward (hare_reward or stag_reward).",
+                "Agents do not receive rewards for standing on tiles; only kills matter.",
+                "Inventory counts how many hare/stag kills you participated in (attacked).",
             ],
         }
 
