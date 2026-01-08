@@ -196,39 +196,40 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
             f"Your cumulative reward: {world.cum_rewards[self.agent_id]:.1f}",
         ]
         
-        # Add detailed nearby agent information with trust scores
-        nearby_agents = self._get_nearby_agents(world)
-
-        vr = self.config.observation.vision_radius
-        self._has_neighbor_recent = any(a["distance"] is not None and a["distance"] <= vr for a in nearby_agents)
-        if nearby_agents:
+        # Add nearby agent summary from env observation
+        self._has_neighbor_recent = bool(nearby.get("agent_count", 0))
+        if nearby.get("agent_count", 0):
             lines.append("\nNearby Agents (within vision):")
-            for agent_info in nearby_agents:
-                proximity = "ADJACENT" if agent_info['is_adjacent'] else f"distance {agent_info['distance']}"
-                trust_str = f", trust:{agent_info['trust']:+.1f}" if agent_info['trust'] != 0 else ""
-                lines.append(
-                    f"  - Agent {agent_info['id']}: {proximity}, "
-                    f"{agent_info['direction']} of you{trust_str}"
-                )
+            if nearby.get("ally_adjacent"):
+                lines.append("  - An ally is adjacent.")
+            nearest_dir = nearby.get("nearest_agent_dir")
+            nearest_dist = nearby.get("nearest_agent_dist")
+            if nearest_dir is not None and nearest_dist is not None:
+                lines.append(f"  - Nearest agent: {nearest_dir} ({nearest_dist})")
         
         # Add resource information
         if nearby["stag_adjacent"]:
             lines.append("\nA STAG is adjacent!")
+        elif nearby.get("stag_nearby_dir"):
+            lines.append(
+                f"\nNearest STAG: {nearby['stag_nearby_dir']} "
+                f"({nearby['stag_nearby_dist']})"
+            )
         
         if nearby["hare_dir"]:
             lines.append(f"A HARE is {nearby['hare_dir']}")
+        elif nearby.get("hare_nearby_dir"):
+            lines.append(
+                f"Nearest HARE: {nearby['hare_nearby_dir']} "
+                f"({nearby['hare_nearby_dist']})"
+            )
         
         # Add action reminder
         lines.append("\nActions: 0=stay, 1=up, 2=right, 3=down, 4=left, 5=attack")
         
         # Add strategic context based on what we see
-        if nearby["stag_adjacent"] and nearby_agents:
-            adjacent_agents = [a for a in nearby_agents if a['is_adjacent']]
-            if adjacent_agents:
-                # Sort by trust (highest first)
-                adjacent_agents.sort(key=lambda a: a['trust'], reverse=True)
-                agent_ids = ", ".join(str(a['id']) for a in adjacent_agents)
-                lines.append(f"TIP: You and Agent(s) {agent_ids} can cooperate on STAG")
+        if nearby["stag_adjacent"] and nearby.get("ally_adjacent"):
+            lines.append("TIP: You can cooperate on STAG and share a message.")
             # else:
             #     lines.append("TIP: STAG needs 2+ agents. Wait for ally to come closer.")
         # elif nearby["stag_adjacent"] and not nearby_agents:

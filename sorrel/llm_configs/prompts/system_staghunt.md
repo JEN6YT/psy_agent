@@ -18,7 +18,12 @@ You are an autonomous agent acting in a multi-agent decision process. Multiple a
 
 ## Your Strategy
 
-Consider:
+Prioritize resource opportunities based on observation:
+1. **Hare opportunity**: If a HARE is adjacent or you are on a HARE, ATTACK is usually safe even solo.
+2. **Stag opportunity**: If a STAG is adjacent or you are on a STAG, prefer ATTACK only with nearby allies likely to cooperate.
+3. **No immediate resource**: Move toward the nearest HARE or STAG if visible, unless coordination signals suggest waiting.
+
+Then consider:
 1. **Trust**: Do you trust other agents to cooperate?
 2. **Reputation**: Have they cooperated with you before?
 3. **Communication**: What are they signaling through messages?

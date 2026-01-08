@@ -94,6 +94,7 @@ class StagHuntEnv:
         # Message radius: prefer bus radius, else obs vision, else 3
         obs_cfg = self.config.get("observation", {}) if isinstance(self.config, dict) else {}
         self.bus_radius: int = int(bus_cfg.get("radius", obs_cfg.get("vision_radius", 3)))
+        self.vision_radius: int = int(obs_cfg.get("vision_radius", 3))
 
         # Optional LOS callback (not required)
         if not hasattr(self, "line_of_sight"):
@@ -721,30 +722,88 @@ class StagHuntEnv:
 
     def _get_nearby_info(self, agent_id: int) -> Dict[str, Any]:
         y, x, _ = self.agent_positions[agent_id]
-        neighbors = [(y - 1, x, "up"), (y + 1, x, "down"), (y, x - 1, "left"), (y, x + 1, "right")]
+        h, w = self.world.height, self.world.width
+        r = int(getattr(self, "vision_radius", 3))
+        agent_cells = {(py, px) for (py, px, _) in self.agent_positions.values()}
+
+        def _in_bounds(ny: int, nx: int) -> bool:
+            return 0 <= ny < h and 0 <= nx < w
+
+        def _dir_from_delta(dy: int, dx: int) -> str:
+            if dy == 0 and dx == 0:
+                return "here"
+            if abs(dy) > abs(dx):
+                return "north" if dy < 0 else "south"
+            if abs(dx) > abs(dy):
+                return "west" if dx < 0 else "east"
+            ns = "north" if dy < 0 else "south"
+            ew = "west" if dx < 0 else "east"
+            return f"{ns}-{ew}"
 
         info = {
             "ally_adjacent": False,
             "stag_adjacent": False,
             "hare_dir": None,
-            "on_hare": isinstance(self.world.observe((y, x, self.world.dynamic_layer)), HareResource),
-            "on_stag": isinstance(self.world.observe((y, x, self.world.dynamic_layer)), StagResource),
+            "hare_nearby_dir": None,
+            "hare_nearby_dist": None,
+            "stag_nearby_dir": None,
+            "stag_nearby_dist": None,
+            "agent_nearby": [],
+            "nearest_agent_dist": None,
+            "nearest_agent_dir": None,
+            "agent_count": 0,
         }
 
-        agent_cells = {(py, px) for (py, px, _) in self.agent_positions.values()}
+        best_hare: Optional[Tuple[int, str]] = None
+        best_stag: Optional[Tuple[int, str]] = None
+        best_agent: Optional[Tuple[int, str]] = None
 
-        for ny, nx, d in neighbors:
-            if not (0 <= ny < self.world.height and 0 <= nx < self.world.width):
-                continue
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                dist = abs(dy) + abs(dx)
+                if dist > r:
+                    continue
+                ny, nx = y + dy, x + dx
+                if not _in_bounds(ny, nx):
+                    continue
+                if dist == 1 and (ny, nx) in agent_cells:
+                    info["ally_adjacent"] = True
+                if dist != 0 and (ny, nx) in agent_cells:
+                    direction = _dir_from_delta(dy, dx)
+                    info["agent_nearby"].append(
+                        {
+                            "pos": (ny, nx),
+                            "distance": dist,
+                            "direction": direction,
+                            "is_adjacent": dist == 1,
+                        }
+                    )
+                    if best_agent is None or dist < best_agent[0]:
+                        best_agent = (dist, direction)
 
-            if (ny, nx) in agent_cells:
-                info["ally_adjacent"] = True
+                ent = self.world.observe((ny, nx, self.world.dynamic_layer))
+                if dist == 1:
+                    if isinstance(ent, StagResource):
+                        info["stag_adjacent"] = True
+                    elif isinstance(ent, HareResource) and info["hare_dir"] is None:
+                        info["hare_dir"] = "up" if dy == -1 else "down" if dy == 1 else "left" if dx == -1 else "right"
 
-            ent = self.world.observe((ny, nx, self.world.dynamic_layer))
-            if isinstance(ent, StagResource):
-                info["stag_adjacent"] = True
-            elif isinstance(ent, HareResource) and info["hare_dir"] is None:
-                info["hare_dir"] = d
+                if isinstance(ent, HareResource):
+                    if best_hare is None or dist < best_hare[0]:
+                        best_hare = (dist, _dir_from_delta(dy, dx))
+                elif isinstance(ent, StagResource):
+                    if best_stag is None or dist < best_stag[0]:
+                        best_stag = (dist, _dir_from_delta(dy, dx))
+
+        if best_hare is not None:
+            info["hare_nearby_dist"], info["hare_nearby_dir"] = best_hare
+        if best_stag is not None:
+            info["stag_nearby_dist"], info["stag_nearby_dir"] = best_stag
+        if info["agent_nearby"]:
+            info["agent_nearby"].sort(key=lambda a: a["distance"])
+            info["agent_count"] = len(info["agent_nearby"])
+        if best_agent is not None:
+            info["nearest_agent_dist"], info["nearest_agent_dir"] = best_agent
 
         return info
 

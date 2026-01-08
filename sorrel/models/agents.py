@@ -196,11 +196,26 @@ class LLMPlayer(BaseModel):
             self.conversation_history.pop(0)
         self.turn_count += 1
         return action
+
+    def _extract_json_block(self, src: str) -> Optional[str]:
+            if not src:
+                return None
+            m = re.search(r"```(?:json)?\s*({.*?})\s*```", src, re.I | re.S)
+            if m:
+                return m.group(1)
+            start = src.find("{")
+            end = src.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                return src[start:end + 1]
+            return None
     
     def _parse_json_response(self, text: str):
         # returns (action:int, message:str|None, confidence:int|None, reasoning:str|None)
+
+        block = self._extract_json_block(text) or text
+
         try:
-            obj = json.loads(text)
+            obj = json.loads(block)
             if isinstance(obj, dict):
                 norm = {str(k).strip().lower(): v for k, v in obj.items()}
                 action_val = norm.get("action", norm.get("action_id"))

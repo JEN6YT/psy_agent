@@ -14,6 +14,7 @@ import numpy as np
 import os
 import json
 import time
+import re
 from pathlib import Path
 
 from sorrel.examples.staghunt.env import StagHuntEnv
@@ -113,6 +114,71 @@ class StagHuntRunner:
         positions = self._positions_dict()
         self.bus.deliver(positions=positions, radius=self._radius)
 
+    def _parse_llm_fields(self, text: str) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "REASONING": None,
+            "ACTION": None,
+            "MESSAGE": None,
+            "CONFIDENCE": None,
+        }
+        if not text:
+            return out
+
+        # JSON first
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, dict):
+                norm = {str(k).strip().lower(): v for k, v in obj.items()}
+                out["ACTION"] = norm.get("action", norm.get("action_id"))
+                out["MESSAGE"] = norm.get("message")
+                out["CONFIDENCE"] = norm.get("confidence", norm.get("conf"))
+                out["REASONING"] = norm.get("reasoning", norm.get("reason"))
+        except Exception:
+            pass
+
+        # Plain-text fallback
+        if out["ACTION"] is None:
+            m_act = re.search(r"\bACTION\s*[:=]\s*(\d+)", text, re.I)
+            if m_act:
+                out["ACTION"] = int(m_act.group(1))
+        if out["MESSAGE"] is None:
+            m_msg = re.search(r"\bMESSAGE\s*[:=]\s*(.+?)(?:\n|$)", text, re.I | re.S)
+            if m_msg:
+                out["MESSAGE"] = m_msg.group(1).strip()
+        if out["CONFIDENCE"] is None:
+            m_conf = re.search(r"\bCONFIDENCE\s*[:=]\s*(\d+)", text, re.I)
+            if m_conf:
+                out["CONFIDENCE"] = int(m_conf.group(1))
+        if out["REASONING"] is None:
+            m_reas = re.search(
+                r"\bREASONING\s*[:=]\s*(.*?)(?=\n\s*(ACTION|MESSAGE|CONFIDENCE)\b|$)",
+                text,
+                re.I | re.S,
+            )
+            if m_reas:
+                out["REASONING"] = m_reas.group(1).strip()
+
+        return out
+
+    def _reasoning_fields_for_agent(self, agent: StagHuntLLMAgent, raw: str) -> Dict[str, Any]:
+        lp = getattr(agent.model, "last_parsed", {}) or {}
+        if lp:
+            fields = {
+                "REASONING": lp.get("REASONING"),
+                "ACTION": lp.get("ACTION"),
+                "MESSAGE": lp.get("MESSAGE"),
+                "CONFIDENCE": lp.get("CONFIDENCE"),
+            }
+            if all(v is not None for v in fields.values()):
+                return fields
+        parsed = self._parse_llm_fields(raw)
+        return {
+            "REASONING": lp.get("REASONING") if lp else parsed.get("REASONING"),
+            "ACTION": lp.get("ACTION") if lp else parsed.get("ACTION"),
+            "MESSAGE": lp.get("MESSAGE") if lp else parsed.get("MESSAGE"),
+            "CONFIDENCE": lp.get("CONFIDENCE") if lp else parsed.get("CONFIDENCE"),
+        }
+
     # ---------- main loops ----------
     def run_episode(self, max_steps: int = 100, verbose: bool = False, episode_idx: int | None = None) -> dict:
         # --- episode init ---
@@ -193,13 +259,14 @@ class StagHuntRunner:
             reasoning = {}
             for agent in self.agents:
                 lp = getattr(agent.model, "last_parsed", {}) or {}
-                if lp:
-                    reasoning[str(agent.agent_id)] = {
-                        "REASONING": lp.get("REASONING"),
-                        "ACTION": lp.get("ACTION"),
-                        "MESSAGE": lp.get("MESSAGE"),
-                        "CONFIDENCE": lp.get("CONFIDENCE"),
-                    }
+                raw = lp.get("RAW") if isinstance(lp, dict) else ""
+                if not raw:
+                    raw = llm_responses.get(agent.agent_id, "")
+                fields = self._reasoning_fields_for_agent(agent, raw)
+                if fields.get("ACTION") is None:
+                    fields["ACTION"] = actions.get(agent.agent_id)
+                if any(v is not None and v != "" for v in fields.values()):
+                    reasoning[str(agent.agent_id)] = fields
             frame_rewards = {str(aid): float(rewards.get(aid, 0.0)) for aid in ordered_ids}
 
 
@@ -372,7 +439,7 @@ if __name__ == "__main__":
     # Create team of N agents with shared MessageBus and Reputation
     agents, bus, rep = create_agent_team(
         num_agents=2,
-        model_name="Qwen/Qwen2.5-0.5B-Instruct",
+        model_name="Qwen/Qwen2.5-3B-Instruct",
         config=config,
         verbose=True
     )

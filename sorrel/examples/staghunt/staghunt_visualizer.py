@@ -83,10 +83,10 @@ def ensure_default_floor(path: str, tile: int = 64) -> None:
 
 def default_sprite_paths() -> Dict[str, str]:
     return {
-        "floor": "./assets/floor.png",
-        "wall": "./assets/wall.png",
-        "hare": "./assets/hare.png",
-        "stag": "./assets/stag.png",
+        "floor": "sorrel/examples/staghunt/assets/floor.png",
+        "wall": "sorrel/examples/staghunt/assets/wall.png",
+        "hare": "sorrel/examples/staghunt/assets/hare.png",
+        "stag": "sorrel/examples/staghunt/assets/stag.png",
         # optional overlays could go here later
     }
 
@@ -95,7 +95,7 @@ def default_agent_sprite_paths() -> Dict[Tuple[int, str], str]:
     out: Dict[Tuple[int, str], str] = {}
     for aid in (0, 1):
         for facing in ("front", "back", "left", "right"):
-            out[(aid, facing)] = f"./assets/agent{aid}_{facing}.png"
+            out[(aid, facing)] = f"sorrel/examples/staghunt/assets/agent{aid}_{facing}.png"
     return out
 
 
