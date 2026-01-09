@@ -12,7 +12,7 @@ Renders:
 Expected trace schema (per frame):
 {
   "t": int,
-  "agents": [{"id":0,"y":..,"x":..,"facing":"front|back|left|right", ...}, ...],
+  "agents": [{"id":0,"y":..,"x":..,"facing":"front|back|left|right","health":.., ...}, ...],
   "hares": [{"y":..,"x":..,"hp":..}, ...],    # hp optional
   "stags": [{"y":..,"x":..,"hp":..}, ...],    # hp optional
   "actions": {"0":int, "1":int},
@@ -439,7 +439,9 @@ class Renderer:
             draw.text((x0 + 12, y), header, fill=(200, 220, 255, 255), font=self.font)
             y += 16
 
-            meta = f"step r: {step_r:+.2f}    action: {act_name}    conf: {conf_str}"
+            hp = _safe_int(a.get("health", None), None)
+            hp_str = "?" if hp is None else str(hp)
+            meta = f"step r: {step_r:+.2f}    action: {act_name}    conf: {conf_str}    hp: {hp_str}"
             draw.text((x0 + 12, y), meta, fill=(220, 220, 220, 255), font=self.font)
             y += 18
 

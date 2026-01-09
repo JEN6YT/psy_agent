@@ -134,6 +134,7 @@ class WorldConfig(ConfigMixin):
     beam_cooldown: int = 3
     freeze_duration: int = 5
     respawn_delay: int = 10
+    attack_cooldown: int = 1
 
     # NEW: explicit radii for attacks and agent-agent interaction beams
     attack_radius: int = 3            # max Chebyshev distance to attack stag/hare
@@ -161,6 +162,9 @@ class WorldConfig(ConfigMixin):
     # NEW: health regeneration parameters for resources
     # base rate; stag/hare can use different multipliers in their transition
     health_regeneration_rate: float = 1.0
+    stag_health: int = 6
+    hare_health: int = 1
+    agent_health: int = 12
     stag_regeneration_cooldown: int = 1
     hare_regeneration_cooldown: int = 1
 
@@ -336,6 +340,9 @@ def create_default_staghunt_config() -> ExperimentConfig:
             interaction_radius=3,
             attack_cost=0.05,
             health_regeneration_rate=1.0,
+            stag_health=6,
+            hare_health=1,
+            agent_health=12,
             stag_regeneration_cooldown=1,
             hare_regeneration_cooldown=1,
         ),
@@ -386,6 +393,9 @@ def create_map_based_staghunt_config(map_file: str = "simple_hunt.txt") -> Exper
             interaction_radius=3,
             attack_cost=0.05,
             health_regeneration_rate=1.0,
+            stag_health=6,
+            hare_health=1,
+            agent_health=12,
             stag_regeneration_cooldown=1,
             hare_regeneration_cooldown=1,
         ),
@@ -437,6 +447,9 @@ def create_competitive_staghunt_config() -> ExperimentConfig:
             interaction_radius=3,
             attack_cost=0.05,
             health_regeneration_rate=1.0,
+            stag_health=6,
+            hare_health=1,
+            agent_health=12,
             stag_regeneration_cooldown=1,
             hare_regeneration_cooldown=1,
         ),
@@ -497,6 +510,9 @@ def create_large_world_config(num_agents: int = 8, map_file: Optional[str] = Non
             interaction_radius=3,
             attack_cost=0.05,
             health_regeneration_rate=1.0,
+            stag_health=6,
+            hare_health=1,
+            agent_health=12,
             stag_regeneration_cooldown=1,
             hare_regeneration_cooldown=1,
         ),
@@ -555,7 +571,11 @@ def get_config_dict(config: ExperimentConfig) -> Dict[str, Any]:
             "attack_radius": config.world.attack_radius,
             "interaction_radius": config.world.interaction_radius,
             "attack_cost": config.world.attack_cost,
+            "attack_cooldown": config.world.attack_cooldown,
             "health_regeneration_rate": config.world.health_regeneration_rate,
+            "stag_health": config.world.stag_health,
+            "hare_health": config.world.hare_health,
+            "agent_health": config.world.agent_health,
             "stag_regeneration_cooldown": config.world.stag_regeneration_cooldown,
             "hare_regeneration_cooldown": config.world.hare_regeneration_cooldown,
         }

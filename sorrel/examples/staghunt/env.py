@@ -541,11 +541,10 @@ class StagHuntEnv:
         else:  # hare
             outcome = "solo_hare" if len(attackers) == 1 else "shared_hare"
 
-        metrics = getattr(env, "metrics_collector", None)
-
-        reward_map: Dict[int, float] = {}
-
         env = getattr(world, "environment", None)
+        metrics = getattr(env, "metrics_collector", None)
+        reward_map: Dict[int, float] = {}
+        
         for agent in getattr(env, "agents", []):
             # Inventory
             inv = getattr(agent, "inventory", None)

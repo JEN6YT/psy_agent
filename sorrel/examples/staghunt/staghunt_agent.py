@@ -475,21 +475,27 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         raw = llm_response or lp.get("RAW") or ""
         message_sent = self.current_message  # set in transition from model.last_message
 
-        # Build structured notes (don’t lose reasoning/confidence)
-        notes = {
-            "reasoning": lp.get("REASONING"),
-            "confidence": lp.get("CONFIDENCE"),
-            "turn": getattr(self, "turn_count", None),
-        }
+        # Build structured notes as list of strings for episodic memory.
+        notes = []
+        reasoning = lp.get("REASONING")
+        confidence = lp.get("CONFIDENCE")
+        if reasoning:
+            notes.append(f"reasoning={reasoning}")
+        if confidence is not None:
+            notes.append(f"confidence={confidence}")
+        notes.append(f"turn={getattr(self, 'turn_count', None)}")
 
         # Fall back to lightweight parse if you didn’t use last_parsed
-        if not notes["reasoning"] and raw:
+        if not reasoning and raw:
             try:
                 obj = json.loads(raw)
                 if isinstance(obj, dict):
-                    notes["reasoning"] = obj.get("REASONING") or obj.get("reasoning")
+                    extracted_reasoning = obj.get("REASONING") or obj.get("reasoning")
+                    if extracted_reasoning:
+                        notes.append(f"reasoning={extracted_reasoning}")
                     conf = obj.get("CONFIDENCE") or obj.get("confidence")
-                    notes["confidence"] = None if conf is None else max(0, min(100, int(conf)))
+                    if conf is not None:
+                        notes.append(f"confidence={max(0, min(100, int(conf)))}")
             except Exception:
                 pass
                 

@@ -278,6 +278,7 @@ class StagHuntRunner:
                     "y": int(positions[a.agent_id][0]),
                     "x": int(positions[a.agent_id][1]),
                     "facing": ORIENT_TO_FACING.get(int(getattr(a, "orientation", 2)), "front"),
+                    "health": int(getattr(a, "health", 0)),
                     }
                     for a in self.agents
                 ],
