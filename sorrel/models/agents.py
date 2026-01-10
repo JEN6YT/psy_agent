@@ -33,6 +33,8 @@ class LLMPlayer(BaseModel):
         episodic_capacity: int = 512,
         fine_tuning_enabled: bool = False,
         reward_rule: dict | str | None = None,
+        vision_radius: int | None = None,
+        beam_length: int | None = None,
         **hf_kwargs
     ):
         super().__init__(
@@ -66,7 +68,13 @@ class LLMPlayer(BaseModel):
         # System prompt selection
         self.system_prompt = (
             custom_system_prompt or
-            (system_staghunt(self.role, self.action_table, reward_rule) if game_type == "staghunt" else
+            (system_staghunt(
+                self.role,
+                self.action_table,
+                reward_rule,
+                vision_radius=vision_radius,
+                beam_length=beam_length,
+            ) if game_type == "staghunt" else
              system_treasurehunt(self.role, self.action_table) if game_type == "treasurehunt" else
              self._default_system_prompt())
         )

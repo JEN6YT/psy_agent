@@ -852,7 +852,6 @@ class StagHuntEnv:
                 "You can only gain reward by ATTACK, which fires a beam forward in your current orientation.",
                 "When a resource dies, all agents who attacked it that turn receive an "
                 "equal share of its total reward (hare_reward or stag_reward).",
-                "Agents do not receive rewards for standing on tiles; only kills matter.",
                 "Inventory counts how many hare/stag kills you participated in (attacked).",
             ],
         }

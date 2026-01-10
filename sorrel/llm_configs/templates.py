@@ -97,6 +97,8 @@ def system_staghunt(
     role: str,
     action_table: Mapping[int, str],
     reward_rule: dict | str | None = None,
+    vision_radius: int | None = None,
+    beam_length: int | None = None,
 ) -> str:
     tpl = PromptRegistry.get(PromptRegistry.STAG)
     table_str = json.dumps({int(k): v for k, v in action_table.items()}, ensure_ascii=False)
@@ -107,7 +109,14 @@ def system_staghunt(
     else:
         reward_rule_str = str(reward_rule) if reward_rule else "Not specified."
 
-    return render(tpl, role=role, action_table=table_str, reward_rule=reward_rule_str)
+    return render(
+        tpl,
+        role=role,
+        action_table=table_str,
+        reward_rule=reward_rule_str,
+        vision_radius=vision_radius,
+        beam_length=beam_length,
+    )
 
 
 def system_treasurehunt(role: str, action_table: Mapping[int, str]) -> str:

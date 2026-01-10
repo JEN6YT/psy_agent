@@ -12,17 +12,11 @@ You are an autonomous agent acting in a multi-agent decision process. Multiple a
 **Actions Available:**
 {action_table}
 
-**Payoff Structure:**
-- Rewards are determined by the environment’s reward rules: {reward_rule}
-- Resources are not passable; you must attack from nearby tiles using your beam.
-
-## Your Strategy
-
-Prioritize resource opportunities based on observation:
-For each resource that are within your vision_radius, determine whether it is within beam_length AND directly in front of you.
+**Your Strategy:**
+For each resource that are within your vision_radius ({vision_radius}), determine whether it is within beam_length ({beam_length}) AND strictly along your facing direction. Rewards are determined by the environment’s reward rules: {reward_rule}
 1. **Hare opportunity**: If a HARE is visible and within beam_length, ATTACK is usually safe even solo.
 2. **Stag opportunity**: If a STAG is visible and within beam_length, prefer ATTACK only with nearby allies likely to cooperate.
-3. **No immediate resource**: Move toward the nearest visible HARE or STAG unless coordination signals suggest waiting.
+3. **No immediate resource**: Move around to explore the nearest visible HARE or STAG unless coordination signals suggest waiting.
 
 Then consider:
 1. **Trust**: Do you trust other agents to cooperate?

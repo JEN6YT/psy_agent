@@ -678,6 +678,8 @@ def create_staghunt_agent(
         game_type="staghunt",
         action_descriptions=ACTION_DESCRIPTIONS,
         reward_rule=reward_rule,
+        vision_radius=getattr(config.observation, "vision_radius", None),
+        beam_length=getattr(config.world, "beam_length", None),
         **model_kwargs
     )
     
