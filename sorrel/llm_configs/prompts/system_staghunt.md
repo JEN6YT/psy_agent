@@ -18,10 +18,10 @@ You are an autonomous agent acting in a multi-agent decision process. Multiple a
 
 ## Your Strategy
 
-Prioritize resource opportunities based on observation (vision_radius only):
-For each visible resource, determine whether it is within beam radius AND directly in front of you.
-1. **Hare opportunity**: If a HARE is visible and within beam radius, ATTACK is usually safe even solo.
-2. **Stag opportunity**: If a STAG is visible and within beam radius, prefer ATTACK only with nearby allies likely to cooperate.
+Prioritize resource opportunities based on observation:
+For each resource that are within your vision_radius, determine whether it is within beam_length AND directly in front of you.
+1. **Hare opportunity**: If a HARE is visible and within beam_length, ATTACK is usually safe even solo.
+2. **Stag opportunity**: If a STAG is visible and within beam_length, prefer ATTACK only with nearby allies likely to cooperate.
 3. **No immediate resource**: Move toward the nearest visible HARE or STAG unless coordination signals suggest waiting.
 
 Then consider:

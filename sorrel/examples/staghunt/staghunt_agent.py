@@ -223,6 +223,24 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
                 f"Nearest HARE: {nearby['hare_nearby_dir']} "
                 f"({nearby['hare_nearby_dist']})"
             )
+
+        # Add explicit beam reach info to avoid ambiguous "in range" reasoning.
+        beam_length = int(getattr(world, "beam_length", 3))
+        dy, dx = ORIENTATION_VECTORS[self.orientation]
+        beam_hits = []
+        for i in range(1, beam_length + 1):
+            ty, tx = y + dy * i, x + dx * i
+            if not world.is_valid_location((ty, tx)):
+                continue
+            ent = world.world.observe((ty, tx, world.world.dynamic_layer))
+            if isinstance(ent, HareResource):
+                beam_hits.append(f"HARE ({i} ahead)")
+            elif isinstance(ent, StagResource):
+                beam_hits.append(f"STAG ({i} ahead)")
+        if beam_hits:
+            lines.append("Resources in beam: " + ", ".join(beam_hits))
+        else:
+            lines.append("Resources in beam: none")
         
         # Add action reminder
         lines.append("\nActions: 0=stay, 1=up, 2=right, 3=down, 4=left, 5=attack")
@@ -568,8 +586,9 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         # Get the tiles in front of the agent
         dy, dx = ORIENTATION_VECTORS[self.orientation]
 
-        # Get beam radius from world config (default to 3 if not set)
-        beam_radius = getattr(world, "beam_radius", 3)
+        # Beam length controls how far forward the attack reaches.
+        beam_radius = getattr(world, "beam_radius", 1)
+        beam_length = getattr(world, "beam_length", beam_radius)
         
         # Check if single-tile beam mode or area attack mode is enabled
         single_tile_attack = getattr(world, "single_tile_attack", False)
@@ -604,32 +623,11 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
                 if world.valid_location(target):
                     beam_locs.append(target)
         else:
-            # Original multi-tile beam behavior
-            # Calculate right and left vectors by rotating 90 degrees
-            right_dy, right_dx = -dx, dy  # 90 degrees clockwise
-            left_dy, left_dx = dx, -dy  # 90 degrees counter-clockwise
-
-            # Forward beam locations
-            for i in range(1, beam_radius + 1):
+            # Forward-only beam behavior
+            for i in range(1, beam_length + 1):
                 target = (y + dy * i, x + dx * i, world.beam_layer)
                 if world.valid_location(target):
                     beam_locs.append(target)
-
-            # Side beam locations
-            for i in range(beam_radius):
-                # Right side
-                right_target = (
-                    y + right_dy + dy * i,
-                    x + right_dx + dx * i,
-                    world.beam_layer,
-                )
-                if world.valid_location(right_target):
-                    beam_locs.append(right_target)
-
-                # Left side
-                left_target = (y + left_dy + dy * i, x + left_dx + dx * i, world.beam_layer)
-                if world.valid_location(left_target):
-                    beam_locs.append(left_target)
 
         # Place attack beams in valid locations
         valid_beam_locs = []

@@ -794,8 +794,11 @@ class StagHuntEnv:
     # -----------------------------
     # Utilities
     # -----------------------------
-    def is_valid_location(self, loc: Tuple[int, int]) -> bool:
-        y, x = loc
+    def is_valid_location(self, loc: Tuple[int, ...]) -> bool:
+        if len(loc) == 3:
+            y, x, _ = loc
+        else:
+            y, x = loc
         if not (0 <= y < self.world.height and 0 <= x < self.world.width):
             return False
         terrain = self.world.observe((y, x, self.world.terrain_layer))
