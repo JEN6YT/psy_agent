@@ -4,41 +4,36 @@
 {obs_text}
 
 ## Memory & Context
+(Recent Messages and History, Reputation)
 {memory_text}
 
-## Available Actions
-{action_space_json}
+## Action Available
+{action_table}
 
 ---
 
 ## Response Format
 Return only valid JSON following this structure:
 {{
-  "REASONING": "string (1–2 concise sentences)",
+  "REASONING": string,     // 1 to 2  concise sentences,
   "ACTION": number,        // integer action id from {action_table}
-  "MESSAGE": "string",     // "" if no nearby ally
-  "CONFIDENCE": number     // integer 0–100
+  "MESSAGE": string,       // "" if no nearby ally, keep within 5 words
+  "CONFIDENCE": number     // integer between 0 and 100
 }}
 
 For instance,
 {{
-  "REASONING": "Agent 1 is adjacent and has cooperated before, so I will attempt to hunt the stag together.",
+  "REASONING": "Agent 1 is adjacent and has cooperated before, so I will attempt to hunt together.",
   "ACTION": 5,
   "MESSAGE": "Let's cooperate on the stag!",
   "CONFIDENCE": 85
 }}
 
-## Constraints
-- Only include a MESSAGE if another agent is within observation range. The observation includes nearby.ally_adjacent (true/false). If nearby.ally_adjacent is false (no nearby agents), set MESSAGE to "" (empty string).
-- Keep MESSAGE within 5 words.
-- Use only information provided in Observation, Recent Messages and History, Reputation.
-- Resources are not passable; you must attack from nearby tiles using your beam.
-- Do not invent entities or actions. Return JSON only.
+## Attention
+1. Only return a valid JSON object with the four required fields.
+2. Do NOT include any explanations or natural language text.
+3. Ensure the format strictly matches the example above. 
+4. Do NOT invent entities or actions. 
+5. Use only information provided in Observation, Recent Messages and History, and Reputation.
 
-Analyze the situation and decide your next action. Provide:
-- REASONING: Brief strategic analysis
-- ACTION: Action ID number
-- MESSAGE: Communication to nearby agents
-- CONFIDENCE: 0–100
-
-Output JSON ONLY.
+## Now, return your response:

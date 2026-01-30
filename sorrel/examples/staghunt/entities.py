@@ -426,9 +426,9 @@ class InteractionBeam(Beam):
                     agent.receive_message(self.sender_id, self.message)
 
                 # Optional light reputation bump
-                rep_obj = getattr(agent.model, "reputation", None)
-                if rep_obj is not None:
-                    rep_obj.update(self.sender_id, agent_id, delta=+0.1)
+                # Receiver's trust in the sender goes up slightly.
+                if hasattr(agent, "model") and hasattr(agent.model, "update_reputation"):
+                    agent.model.update_reputation(self.sender_id, delta=+0.1)
 
 
 class AttackBeam(Beam):

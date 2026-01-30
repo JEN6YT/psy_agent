@@ -1,11 +1,29 @@
 from abc import abstractmethod
-from typing import Optional, List, Dict, Any, Tuple
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Any, Tuple, Literal
 
 from sorrel.action.action_spec import ActionSpec
 from sorrel.entities import Entity
 from sorrel.models import BaseModel
 from sorrel.observation.observation_spec import ObservationSpec
 from sorrel.worlds import Gridworld
+
+
+Commitment = Optional[Literal["attack_stag", "attack_hare", "none"]]
+
+
+@dataclass
+class InteractionEvidence:
+    """Behavior/outcome-based evidence for reputation updates."""
+
+    commitment: Commitment = None
+    other_attacked: bool = False
+    other_participated_in_kill: bool = False
+    target: Optional[Literal["stag", "hare"]] = None
+    reward_me: float = 0.0
+    reward_other: float = 0.0
+    success: bool = False
+    other_nearby: Optional[bool] = None
 
 
 class LLMAgent[W: Gridworld](Entity[W]):
@@ -269,16 +287,22 @@ class LLMAgent[W: Gridworld](Entity[W]):
     def update_reputation_for_interaction(
         self, 
         other_agent_id: int, 
-        outcome: str,
-        delta: Optional[float] = None
+        outcome: str = "",
+        delta: Optional[float] = None,
+        evidence: Optional["InteractionEvidence"] = None,
     ) -> None:
         """Update reputation based on an interaction outcome.
         
         Args:
             other_agent_id: ID of the other agent.
             outcome: Description of outcome (e.g., "cooperated", "defected").
-            delta: Optional explicit trust change. If None, inferred from outcome.
+            delta: Optional explicit trust change. If None, inferred from evidence
+                or legacy outcome keywords.
+            evidence: Structured interaction evidence for reliability-based updates.
         """
+        if delta is None and evidence is not None:
+            delta = self._infer_delta_from_evidence(evidence)
+
         if delta is None:
             # Infer delta from outcome
             if "cooperate" in outcome.lower() or "help" in outcome.lower():
@@ -288,7 +312,45 @@ class LLMAgent[W: Gridworld](Entity[W]):
             else:
                 delta = 0.0
         
-        self.model.update_reputation(other_agent_id, delta)
+        self.model.update_reputation(other_agent_id, float(delta))
+
+    @staticmethod
+    def _infer_delta_from_evidence(e: "InteractionEvidence") -> float:
+        """Reliability-first trust update from grounded behavior/outcomes."""
+        delta = 0.0
+
+        # 1) Commitment follow-through (strongest signal)
+        if e.commitment in ("attack_stag", "attack_hare"):
+            if e.other_attacked:
+                delta += 1.5
+            else:
+                delta -= 2.5
+
+        # 2) Grounded coordination outcome
+        if e.target == "stag":
+            if e.success and e.reward_me > 0:
+                delta += 2.0
+                if e.other_participated_in_kill:
+                    delta += 0.5
+            else:
+                delta -= 0.5
+        elif e.target == "hare":
+            if e.success and e.reward_me > 0:
+                delta += 0.5
+            else:
+                delta -= 0.1
+
+        # 3) Free-riding signal (optional)
+        if e.other_nearby is True and not e.other_attacked and e.target == "stag":
+            delta -= 1.0
+
+        # 4) Clamp to prevent runaway trust
+        if delta > 4.0:
+            delta = 4.0
+        if delta < -4.0:
+            delta = -4.0
+
+        return delta
 
     def add_memory(
         self, 

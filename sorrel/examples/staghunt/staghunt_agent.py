@@ -5,7 +5,7 @@ the Stag Hunt game, using the MessageBus for efficient message delivery.
 """
 
 from sorrel.action.action_spec import ActionSpec
-from sorrel.models.agents import LLMPlayer
+from sorrel.models.agents import LLMPlayer, resolve_model_class
 from sorrel.llm_configs.observation.serializer import create_llm_observation_parser
 from sorrel.examples.staghunt.config import ExperimentConfig, create_default_staghunt_config
 from sorrel.agents.agent import LLMAgent
@@ -18,6 +18,7 @@ from sorrel.examples.staghunt.env import ORIENTATION_VECTORS
 from sorrel.examples.staghunt.entities import AttackBeam
 
 import json
+import os
 import re
 from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
@@ -186,68 +187,182 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         # Get agent's position
         y, x, _ = world.agent_positions[self.agent_id]
         
-        # Get nearby information
-        nearby = world._get_nearby_info(self.agent_id)
-        
         # Build observation text
         lines = [
             f"Turn {world.turn}/{world.max_turns}",
             f"Your position: ({y}, {x})",
             f"Your cumulative reward: {world.cum_rewards[self.agent_id]:.1f}",
+            f"Your health: {self.health}/{self.max_health}",
+            f"Attack cooldown: {self.attack_cooldown_timer}",
         ]
-        
-        # Add nearby agent summary from env observation
-        self._has_neighbor_recent = bool(nearby.get("agent_count", 0))
-        if nearby.get("agent_count", 0):
-            lines.append("\nNearby Agents (within vision):")
-            if nearby.get("ally_adjacent"):
-                lines.append("  - An ally is adjacent.")
-            nearest_dir = nearby.get("nearest_agent_dir")
-            nearest_dist = nearby.get("nearest_agent_dist")
-            if nearest_dir is not None and nearest_dist is not None:
-                lines.append(f"  - Nearest agent: {nearest_dir} ({nearest_dist})")
-        
-        # Add resource information
-        if nearby["stag_adjacent"]:
-            lines.append("\nA STAG is adjacent!")
-        elif nearby.get("stag_nearby_dir"):
-            lines.append(
-                f"\nNearest STAG: {nearby['stag_nearby_dir']} "
-                f"({nearby['stag_nearby_dist']})"
-            )
-        
-        if nearby["hare_dir"]:
-            lines.append(f"A HARE is {nearby['hare_dir']}")
-        elif nearby.get("hare_nearby_dir"):
-            lines.append(
-                f"Nearest HARE: {nearby['hare_nearby_dir']} "
-                f"({nearby['hare_nearby_dist']})"
-            )
+        inv = getattr(self, "inventory", {"hare": 0, "stag": 0})
+        lines.append(f"Inventory: hare={inv.get('hare', 0)}, stag={inv.get('stag', 0)}")
 
-        # Add explicit beam reach info to avoid ambiguous "in range" reasoning.
-        beam_length = int(getattr(world, "beam_length", 3))
+        vision_radius = int(getattr(world, "vision_radius", self.observation_spec.vision_radius))
+        h, w = world.world.height, world.world.width
+
+        def _in_bounds(ny: int, nx: int) -> bool:
+            return 0 <= ny < h and 0 <= nx < w
+
+        def _format_offset(ny: int, nx: int) -> str:
+            dy = ny - y
+            dx = nx - x
+            parts = []
+            if dy < 0:
+                parts.append(f"up {abs(dy)}")
+            elif dy > 0:
+                parts.append(f"down {dy}")
+            if dx < 0:
+                parts.append(f"left {abs(dx)}")
+            elif dx > 0:
+                parts.append(f"right {dx}")
+            return ", ".join(parts) if parts else "here"
+
         dy, dx = ORIENTATION_VECTORS[self.orientation]
-        beam_hits = []
+        facing_dir = {
+            (-1, 0): "north",
+            (0, 1): "east",
+            (1, 0): "south",
+            (0, -1): "west",
+        }.get((dy, dx), f"({dy}, {dx})")
+        lines.append(f"Facing direction (beam): {facing_dir}")
+
+        # Nearby agents (square vision radius)
+        nearby_agent_positions = []
+        nearby_agent_details = []
+        agent_positions = getattr(world, "agent_positions", {})
+        if isinstance(agent_positions, dict):
+            agent_items = agent_positions.items()
+        else:
+            agent_items = enumerate(agent_positions)
+        ally_adjacent = False
+        for other_id, pos in agent_items:
+            if other_id == self.agent_id:
+                continue
+            oy, ox = pos[0], pos[1]
+            if max(abs(oy - y), abs(ox - x)) <= vision_radius:
+                oy_i, ox_i = int(oy), int(ox)
+                nearby_agent_positions.append((oy_i, ox_i))
+                trust_score = self.reputation.get_trust(self.agent_id, other_id)
+                nearby_agent_details.append((oy_i, ox_i, trust_score))
+                if abs(oy - y) + abs(ox - x) == 1:
+                    ally_adjacent = True
+        self._has_neighbor_recent = bool(nearby_agent_positions)
+        if nearby_agent_positions:
+            nearby_agent_details.sort()
+            lines.append(
+                "Nearby agents within vision: "
+                + ", ".join(
+                    f"({ay}, {ax}) [{_format_offset(ay, ax)}] trust={trust:.2f}"
+                    for ay, ax, trust in nearby_agent_details
+                )
+            )
+        else:
+            lines.append("Nearby agents within vision: none")
+
+        # Nearby walls or unpassable obstacles (square vision radius)
+        blocked_positions = []
+        for dy in range(-vision_radius, vision_radius + 1):
+            for dx in range(-vision_radius, vision_radius + 1):
+                ny, nx = y + dy, x + dx
+                if not _in_bounds(ny, nx):
+                    continue
+                terrain = world.world.observe((ny, nx, world.world.terrain_layer))
+                if not getattr(terrain, "passable", False):
+                    blocked_positions.append((ny, nx))
+        if blocked_positions:
+            blocked_positions.sort()
+            lines.append(
+                "Nearby walls/unpassable tiles: "
+                + ", ".join(
+                    f"({by}, {bx}) [{_format_offset(by, bx)}]"
+                    for by, bx in blocked_positions
+                )
+            )
+        else:
+            lines.append("Nearby walls/unpassable tiles: none")
+
+        # Nearby resources (square vision radius)
+        hare_positions = []
+        stag_positions = []
+        stag_adjacent = False
+        for dy in range(-vision_radius, vision_radius + 1):
+            for dx in range(-vision_radius, vision_radius + 1):
+                ny, nx = y + dy, x + dx
+                if not _in_bounds(ny, nx):
+                    continue
+                ent = world.world.observe((ny, nx, world.world.dynamic_layer))
+                if isinstance(ent, HareResource):
+                    hare_positions.append((ny, nx))
+                elif isinstance(ent, StagResource):
+                    stag_positions.append((ny, nx))
+                    if abs(dy) + abs(dx) == 1:
+                        stag_adjacent = True
+
+        # Beam reach info to mark resources in range (unchanged logic).
+        beam_length = int(getattr(world, "beam_length", 3))
+        beam_hare_positions = set()
+        beam_stag_positions = set()
         for i in range(1, beam_length + 1):
             ty, tx = y + dy * i, x + dx * i
             if not world.is_valid_location((ty, tx)):
                 continue
             ent = world.world.observe((ty, tx, world.world.dynamic_layer))
             if isinstance(ent, HareResource):
-                beam_hits.append(f"HARE ({i} ahead)")
+                beam_hare_positions.add((ty, tx))
             elif isinstance(ent, StagResource):
-                beam_hits.append(f"STAG ({i} ahead)")
-        if beam_hits:
-            lines.append("Resources in beam: " + ", ".join(beam_hits))
+                beam_stag_positions.add((ty, tx))
+
+        if hare_positions:
+            hare_positions.sort()
+            lines.append(
+                "Hares within vision: "
+                + ", ".join(
+                    f"({hy}, {hx}) [{_format_offset(hy, hx)}]"
+                    for hy, hx in hare_positions
+                )
+            )
         else:
-            lines.append("Resources in beam: none")
+            lines.append("Hares within vision: none")
+        if beam_hare_positions:
+            lines.append(
+                "Hares in beam: "
+                + ", ".join(
+                    f"({hy}, {hx}) [{_format_offset(hy, hx)}]"
+                    for hy, hx in sorted(beam_hare_positions)
+                )
+            )
+        else:
+            lines.append("Hares in beam: none")
+
+        if stag_positions:
+            stag_positions.sort()
+            lines.append(
+                "Stags within vision: "
+                + ", ".join(
+                    f"({sy}, {sx}) [{_format_offset(sy, sx)}]"
+                    for sy, sx in stag_positions
+                )
+            )
+        else:
+            lines.append("Stags within vision: none")
+        if beam_stag_positions:
+            lines.append(
+                "Stags in beam: "
+                + ", ".join(
+                    f"({sy}, {sx}) [{_format_offset(sy, sx)}]"
+                    for sy, sx in sorted(beam_stag_positions)
+                )
+            )
+        else:
+            lines.append("Stags in beam: none")
         
         # Add action reminder
         lines.append("\nActions: 0=stay, 1=up, 2=right, 3=down, 4=left, 5=attack")
         
         # Add strategic context based on what we see
-        if nearby["stag_adjacent"] and nearby.get("ally_adjacent"):
-            lines.append("TIP: You can cooperate on STAG and share a message.")
+        if stag_adjacent and ally_adjacent:
+            lines.append("TIP: You may cooperate on STAG and share a message by adding 'MESSAGE: <your message>' to your response.")
             # else:
             #     lines.append("TIP: STAG needs 2+ agents. Wait for ally to come closer.")
         # elif nearby["stag_adjacent"] and not nearby_agents:
@@ -286,18 +401,24 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
             ])
             parts.append(f"\nMESSAGES FROM OTHER AGENTS:\n{msg_text}")
         
-        # Add communication tip
-        nearby_agents = self._get_nearby_agents(world)
-        if nearby_agents:
-            parts.append(
-                f"\nYou can send a MESSAGE to nearby agents. "
-                f"Add 'MESSAGE: <your message>' to your response."
-            )
+        # # Add communication tip
+        # nearby_agents = self._get_nearby_agents(world)
+        # if nearby_agents:
+        #     parts.append(
+        #         f"\nYou can send a MESSAGE to nearby agents. "
+        #         f"Add 'MESSAGE: <your message>' to your response."
+        #     )
         
         # Note: Memory context and action descriptions will be added by
         # the model's _build_turn_prompt() method to avoid duplication
         
-        return "\n".join(parts)
+        observation_text = "\n".join(parts)
+
+        # Optional debug output for inspecting agent observations.
+        if os.getenv("STAGHUNT_DEBUG_OBS") == "1":
+            print(f"\n[DEBUG][Agent {self.agent_id}] Observation:\n{observation_text}\n")
+
+        return observation_text
 
     def get_action(self, state_text: str) -> int:
         # include memory + reputation in context (model assembles it too)
@@ -517,6 +638,9 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
             except Exception:
                 pass
                 
+        # Preserve the pre-action state for the replay transition.
+        prev_state_text = self.last_state_text
+
         self.last_observation = new_obs
         next_state_text = str(new_obs)
 
@@ -530,7 +654,7 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
 
         # Store experience
         self.add_memory(
-            state_text=self.last_state_text,
+            state_text=prev_state_text or self.last_state_text,
             action=self.last_action,
             reward=reward,
             done=done,
@@ -669,7 +793,8 @@ def create_staghunt_agent(
     reward_rule = StagHuntEnv.reward_rules_from_config(config)
     
     # Create the LLM model with correct agent_id
-    model = LLMPlayer(
+    ModelCls = resolve_model_class(model_name, **model_kwargs)
+    model = ModelCls(
         agent_id=agent_id,
         input_size=0,  # Not used for text-based
         action_space=6,

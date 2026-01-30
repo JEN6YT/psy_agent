@@ -28,6 +28,7 @@ from datetime import datetime
 from collections import defaultdict, deque
 from sorrel.examples.staghunt.entities import StagResource, HareResource
 from typing import Tuple
+from sorrel.agents.agent import InteractionEvidence
 
 ORIENT_TO_FACING = {
     0: "back",   # north
@@ -179,6 +180,16 @@ class StagHuntRunner:
             "CONFIDENCE": lp.get("CONFIDENCE") if lp else parsed.get("CONFIDENCE"),
         }
 
+    def _parse_commitment(self, text: str | None) -> str | None:
+        if not text:
+            return None
+        t = text.lower()
+        if "stag" in t and ("attack" in t or "hunt" in t):
+            return "attack_stag"
+        if "hare" in t and ("attack" in t or "hunt" in t):
+            return "attack_hare"
+        return None
+
     # ---------- main loops ----------
     def run_episode(self, max_steps: int = 100, verbose: bool = False, episode_idx: int | None = None) -> dict:
         # --- episode init ---
@@ -299,6 +310,52 @@ class StagHuntRunner:
                 rdict = {int(k): float(v) for k, v in rewards.items()}
             else:
                 rdict = {ordered_ids[i]: float(rewards[i]) for i in range(len(ordered_ids))}
+
+            # ---- phase 3.5: update reputation using structured evidence ----
+            # Build a per-sender commitment map from messages sent this frame.
+            commitment_by_sender: Dict[int, str] = {}
+            for m in frame_messages:
+                sid = m.get("sender")
+                commit = self._parse_commitment(m.get("text"))
+                if sid is not None and commit:
+                    commitment_by_sender[int(sid)] = commit
+
+            for agent in self.agents:
+                my_id = agent.agent_id
+                my_reward = rdict.get(my_id, 0.0)
+                my_pos = positions.get(my_id)
+                for other_id in ordered_ids:
+                    if other_id == my_id:
+                        continue
+                    other_reward = rdict.get(other_id, 0.0)
+                    other_attacked = int(actions.get(other_id, 0)) == 5  # 5 == attack
+                    commitment = commitment_by_sender.get(other_id)
+                    target = "stag" if commitment == "attack_stag" else "hare" if commitment == "attack_hare" else None
+
+                    # Heuristic: if a committed target yielded positive reward, treat as success.
+                    success = bool(target) and my_reward > 0
+                    other_participated = bool(target) and other_reward > 0
+
+                    other_nearby = None
+                    if my_pos is not None:
+                        o_pos = positions.get(other_id)
+                        if o_pos is not None:
+                            other_nearby = (abs(my_pos[0] - o_pos[0]) + abs(my_pos[1] - o_pos[1])) <= self._radius
+
+                    evidence = InteractionEvidence(
+                        commitment=commitment,
+                        other_attacked=other_attacked,
+                        other_participated_in_kill=other_participated,
+                        target=target,
+                        reward_me=my_reward,
+                        reward_other=other_reward,
+                        success=success,
+                        other_nearby=other_nearby,
+                    )
+                    agent.update_reputation_for_interaction(
+                        other_agent_id=other_id,
+                        evidence=evidence,
+                    )
 
             trace[-1]["rewards"] = {str(aid): rdict.get(aid, 0.0) for aid in ordered_ids}
             trace[-1]["rewards_cum"] = {
@@ -449,6 +506,18 @@ if __name__ == "__main__":
         verbose=True
     )
 
+    # gpt model
+    # agents, message_bus, reputation = create_agent_team(
+    #     num_agents=2,
+    #     model_name="openai:gpt-4o",   # Required to trigger API path
+    #     api_provider="openai",        # Required
+    #     api_model="gpt-4o",           # Actual OpenAI model string
+    #     api_key="sk-proj-lgRKRdHE7lPX1f0C3uVX10q1oHveWxfrQnHutk184tnXjzR77aSBUG57s1KXNLL4QWiDFBurSaT3BlbkFJrv4I4wloevg-KGGRX8_Bj-wPIAkEPBsx6MRfB4NddG4HMsN0SpEX6YzoUMO-OHyEQYB6My4n4AY",
+    #     temperature=0.1,
+    #     max_tokens=512,
+    # )
+
+
     # Create environment and ensure it uses the same bus
     env = StagHuntEnv(config.to_dict(), agents)
     env.message_bus = bus
@@ -480,7 +549,7 @@ if __name__ == "__main__":
 
     # Create runner and go
     runner = StagHuntRunner(env, agents, run_ctx=run_ctx, tb=tb)
-    stats = runner.run_multiple_episodes(num_episodes=num_episodes, max_steps=100, verbose=True)
+    stats = runner.run_multiple_episodes(num_episodes=num_episodes, max_steps=50, verbose=True)
 
     # Summary
     print("\n" + "="*60)

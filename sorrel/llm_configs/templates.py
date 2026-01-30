@@ -95,14 +95,11 @@ def render(template: str, **kwargs) -> str:
 # ---------- convenience helpers ----------
 def system_staghunt(
     role: str,
-    action_table: Mapping[int, str],
     reward_rule: dict | str | None = None,
     vision_radius: int | None = None,
     beam_length: int | None = None,
 ) -> str:
     tpl = PromptRegistry.get(PromptRegistry.STAG)
-    table_str = json.dumps({int(k): v for k, v in action_table.items()}, ensure_ascii=False)
-
     # stringify reward rule (pretty JSON for readability)
     if isinstance(reward_rule, (dict, list)):
         reward_rule_str = json.dumps(reward_rule, ensure_ascii=False, indent=2)
@@ -112,7 +109,6 @@ def system_staghunt(
     return render(
         tpl,
         role=role,
-        action_table=table_str,
         reward_rule=reward_rule_str,
         vision_radius=vision_radius,
         beam_length=beam_length,
@@ -124,12 +120,14 @@ def system_treasurehunt(role: str, action_table: Mapping[int, str]) -> str:
     table_str = json.dumps({int(k): v for k, v in action_table.items()}, ensure_ascii=False)
     return render(tpl, role=role, action_table=table_str)
 
-def turn_prompt(obs_text: str, memory_text: str, action_space_json: str) -> str:
+def turn_prompt(obs_text: str, memory_text: str, action_table: str) -> str:
     tpl = PromptRegistry.get(PromptRegistry.TURN)
-    return render(tpl,
-                  obs_text=obs_text,
-                  memory_text=memory_text,
-                  action_space_json=action_space_json)
+    return render(
+        tpl,
+        obs_text=obs_text,
+        memory_text=memory_text,
+        action_table=action_table,
+    )
 
 def reflection_prompt(summary: str) -> str:
     tpl = PromptRegistry.get(PromptRegistry.REFLECTION)

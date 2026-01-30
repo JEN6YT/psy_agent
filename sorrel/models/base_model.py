@@ -1,8 +1,12 @@
 import os
+import json
 from abc import abstractmethod
 from typing import Sequence, Dict, Any, Optional, List, Tuple
 
 import numpy as np
+import urllib.request
+import urllib.error
+from openai import OpenAI
 
 from sorrel.buffers import LLMBuffer
 from sorrel.llm_configs.communication.reputation import Reputation
@@ -11,6 +15,46 @@ from sorrel.llm_configs.memory.episodic import EpisodicMemory
 # ============================================================================
 # Base Model
 # ============================================================================
+
+class APIClient:
+    """Minimal HTTP client for GPT-4o text generation."""
+
+    def __init__(
+        self,
+        *,
+        model: str = "gpt-4o",
+        api_key: Optional[str] = None,
+        timeout_s: int = 60,
+    ):
+        self.model = model
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.timeout_s = timeout_s
+
+        if not self.api_key:
+            raise ValueError("Missing OPENAI_API_KEY.")
+
+        # Initialize the official OpenAI client
+        self.client = OpenAI(api_key=self.api_key)
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        system_prompt: Optional[str] = None,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+
+        resp = self.client.responses.create(
+            model=self.model,
+            instructions=system_prompt,
+            input=prompt,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+
+        return resp.output_text.strip()
+
 
 class BaseModel:
     """Generic model class for Sorrel LLM agents. All models should wrap around this
@@ -69,6 +113,9 @@ class BaseModel:
         self.max_tokens = max_tokens
         self.system_prompt = system_prompt
         self.fine_tuning_enabled = fine_tuning_enabled
+
+        # Optional API client for non-local models (e.g., OpenAI/Gemini).
+        self.api_client: Optional["APIClient"] = None
         
         # Track current episode
         self.current_turn = 0

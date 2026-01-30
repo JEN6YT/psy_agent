@@ -476,12 +476,20 @@ class StagHuntEnv:
             if dynamic_layer is None:
                 continue
 
+            has_attack_target = False
             for (by, bx, _) in beam_locs:
                 target = (by, bx, dynamic_layer)
                 if not world.valid_location(target):
                     continue
 
-                _apply_attack(world.observe(target))
+                ent = world.observe(target)
+                if isinstance(ent, (StagResource, HareResource)):
+                    has_attack_target = True
+                _apply_attack(ent)
+
+            if not has_attack_target:
+                attack_cost = float(getattr(world, "attack_cost", 0.05))
+                step_rewards[aid] -= attack_cost
 
             agent.attack_cooldown_timer = getattr(world, "attack_cooldown", 3)
 
@@ -841,18 +849,29 @@ class StagHuntEnv:
     @staticmethod
     def reward_rules_from_config(config: dict) -> dict:
         w = config.get("world", {}) if isinstance(config, dict) else {}
+        hare_reward = float(w.get("hare_reward", 2.0))
+        stag_reward = float(w.get("stag_reward", 5.0))
         return {
             "name": "staghunt_beam_kill_v1",
             "params": {
-                "hare_reward": float(w.get("hare_reward", 2.0)),
-                "stag_reward": float(w.get("stag_reward", 5.0)),
+                "hare_reward": hare_reward,
+                "stag_reward": stag_reward,
             },
             "rules": [
                 "ATTACK (action 5) emits a short beam to destroy nearby HARE / STAG resources.",
-                "You can only gain reward by ATTACK, which fires a beam forward in your current orientation.",
-                "When a resource dies, all agents who attacked it that turn receive an "
+                "Rewards can only be obtained via ATTACK, which fires a beam forward in your current orientation.",
+                "When a resource is destroyed, all agents who attacked it during that turn receive an "
                 "equal share of its total reward (hare_reward or stag_reward).",
-                "Inventory counts how many hare/stag kills you participated in (attacked).",
+                "A solo attacker receives the full reward; multiple attackers split the reward evenly.",
+                "Inventory records how many hare/stag kills you participated in (attacked).",
+            ],
+            "tips": [
+                "HAREs are often safe solo targets if in beam; expected reward is about {hare_reward} when alone.",
+                "STAGs offer higher reward ({stag_reward}) but coordination improves expected value if allies likely attack.",
+                "If allies are nearby and signaling cooperation, consider moving to align on the same resource.",
+                "If no resource is in front of you within beam length, prefer to move around to explore rather than stay at the same place.",
+                "Use movement to scan new tiles and reposition; avoid staying idle for multiple turns unless a target is lined up.",
+                "When a resource is spotted but not in beam, step toward it until it is in beam, then ATTACK.",
             ],
         }
 

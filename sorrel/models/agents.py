@@ -6,7 +6,7 @@ import re, json
 import numpy as np
 
 # Keep your original import paths if these live elsewhere
-from sorrel.models.base_model import BaseModel
+from sorrel.models.base_model import BaseModel, APIClient
 from sorrel.llm_configs.templates import (
     system_staghunt, system_treasurehunt, turn_prompt, reflection_prompt
 )
@@ -70,7 +70,6 @@ class LLMPlayer(BaseModel):
             custom_system_prompt or
             (system_staghunt(
                 self.role,
-                self.action_table,
                 reward_rule,
                 vision_radius=vision_radius,
                 beam_length=beam_length,
@@ -126,16 +125,17 @@ class LLMPlayer(BaseModel):
                 f"Turn {h['turn']}: chose {h['action']} ({self.action_descriptions[h['action']]})"
                 for h in recent
             ))
+        rep_snapshot = self.reputation.snapshot_str(self.agent_id, top=3)
+        if rep_snapshot and (not context or "REPUTATION:" not in context):
+            mem_parts.append(f"REPUTATION: {rep_snapshot}")
         if context:
             mem_parts.append(context)
         memory_text = "\n\n".join(mem_parts) if mem_parts else "No previous context."
 
-        action_space_json = json.dumps(self.action_table, ensure_ascii=False, indent=2)
-
         prompt = turn_prompt(
             obs_text=state_text,
             memory_text=memory_text,
-            action_space_json=action_space_json
+            action_table=json.dumps(self.action_table, ensure_ascii=False, indent=2)
         )
         return f"{self.system_prompt.strip()}\n\n{prompt.strip()}"
 
@@ -317,3 +317,57 @@ class LLMPlayer(BaseModel):
     def model_name_str(self) -> str:
         # ---- FIX: reflect our internal HF model name
         return f"LLMPlayer-transformers-{self._hf_model_name}"
+
+
+class APILLMPlayer(LLMPlayer):
+    """GPT-4o-backed LLM player."""
+
+    def __init__(
+        self,
+        *args,
+        api_model: Optional[str] = "gpt-4o",
+        api_key: Optional[str] = None,
+        api_timeout_s: int = 60,
+        **kwargs,
+    ):
+        self._api_model = api_model
+        self._api_key = api_key
+        self._api_timeout_s = api_timeout_s
+        super().__init__(*args, **kwargs)
+
+    def _init_transformers(self) -> None:
+        if not self._api_model:
+            raise ValueError("Must specify an api_model (default gpt-4o).")
+
+        self.api_client = APIClient(
+            model=self._api_model,
+            api_key=self._api_key,
+            timeout_s=self._api_timeout_s,
+        )
+
+        self.device = "api"
+        self.tokenizer = None
+        self.model = None
+
+    def generate(self, prompt: str, *, temperature=None, max_tokens=None) -> str:
+        temp = float(self.temperature if temperature is None else temperature)
+        max_new = int(self.max_tokens if max_tokens is None else max_tokens)
+        return self.api_client.generate(
+            prompt,
+            temperature=temp,
+            max_tokens=max_new,
+            system_prompt=self.system_prompt,
+        )
+
+    def generate_text(self, prompt: str, temperature=None, max_tokens=None) -> str:
+        return self.generate(prompt, temperature=temperature, max_tokens=max_tokens)
+
+
+
+def resolve_model_class(model_name: str, **model_kwargs):
+    api_provider = model_kwargs.get("api_provider")
+    if api_provider in ("openai", "gemini"):
+        return APILLMPlayer
+    if isinstance(model_name, str) and model_name.startswith(("openai:", "gemini:")):
+        return APILLMPlayer
+    return LLMPlayer
