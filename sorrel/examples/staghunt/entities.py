@@ -249,8 +249,10 @@ class Resource(Entity["StagHuntWorld"]):
             if turns_since_attack >= self.regeneration_cooldown:
                 # Use per-resource regeneration_rate, optionally scaled by global factor
                 global_scale = float(getattr(world, "health_regeneration_rate", 1.0))
-                regen_amount = self.regeneration_rate * global_scale
-                self.health = min(self.max_health, self.health + regen_amount)
+                regen_amount = int(round(self.regeneration_rate * global_scale))
+                if regen_amount <= 0:
+                    return
+                self.health = min(self.max_health, int(self.health) + regen_amount)
 
 
 

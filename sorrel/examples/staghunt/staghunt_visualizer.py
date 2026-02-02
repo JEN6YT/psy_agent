@@ -246,18 +246,34 @@ class Renderer:
                 canvas.alpha_composite(base, (x * self.tile, y * self.tile))
 
         # 2) resources
+        draw = ImageDraw.Draw(canvas)
+        hp_marks: List[Tuple[int, int, str]] = []
         for h in frame.get("hares", []):
+            hp = _safe_int(h.get("hp", 1))
+            if hp <= 0:
+                continue
             if "hare" in self.sprites:
+                x = _safe_int(h.get("x", 0))
+                y = _safe_int(h.get("y", 0))
                 canvas.alpha_composite(
                     self.sprites["hare"],
-                    (_safe_int(h.get("x", 0)) * self.tile, _safe_int(h.get("y", 0)) * self.tile),
+                    (x * self.tile, y * self.tile),
                 )
+                if "hp" in h:
+                    hp_marks.append((x, y, f"{hp}"))
         for s in frame.get("stags", []):
+            hp = _safe_int(s.get("hp", 1))
+            if hp <= 0:
+                continue
             if "stag" in self.sprites:
+                x = _safe_int(s.get("x", 0))
+                y = _safe_int(s.get("y", 0))
                 canvas.alpha_composite(
                     self.sprites["stag"],
-                    (_safe_int(s.get("x", 0)) * self.tile, _safe_int(s.get("y", 0)) * self.tile),
+                    (x * self.tile, y * self.tile),
                 )
+                if "hp" in s:
+                    hp_marks.append((x, y, f"{hp}"))
 
         # 2.5) beams
         for b in frame.get("beams", []):
@@ -288,6 +304,20 @@ class Renderer:
                     f"Expected ./assets/agent{aid}_{facing}.png or fallback agent0."
                 )
             canvas.alpha_composite(spr, (x * self.tile, y * self.tile))
+
+        # 3.25) resource HP overlay (draw after beams/agents for readability)
+        if hp_marks:
+            draw = ImageDraw.Draw(canvas)
+            for x, y, hp_text in hp_marks:
+                px = x * self.tile + 4
+                py = y * self.tile + 2
+                self._draw_text_outline(
+                    draw,
+                    (px, py),
+                    hp_text,
+                    fill=(255, 255, 255, 255),
+                    outline=(0, 0, 0, 255),
+                )
 
         # 3.5) speech bubbles (from bus messages)
         if self.show_bubbles:
@@ -381,6 +411,19 @@ class Renderer:
 
         # text
         draw.text((px + pad, py + pad - 1), wrapped, fill=(0, 0, 0, 255), font=self.font)
+
+    def _draw_text_outline(
+        self,
+        draw: ImageDraw.ImageDraw,
+        pos_xy: Tuple[int, int],
+        text: str,
+        fill: Tuple[int, int, int, int],
+        outline: Tuple[int, int, int, int],
+    ) -> None:
+        x, y = pos_xy
+        for ox, oy in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]:
+            draw.text((x + ox, y + oy), text, fill=outline, font=self.font)
+        draw.text((x, y), text, fill=fill, font=self.font)
 
     def _draw_panel(self, canvas: Image.Image, frame: Dict[str, Any], grid_w: int) -> None:
         draw = ImageDraw.Draw(canvas)

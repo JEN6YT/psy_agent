@@ -161,12 +161,13 @@ class WorldConfig(ConfigMixin):
 
     # NEW: health regeneration parameters for resources
     # base rate; stag/hare can use different multipliers in their transition
+    # Integer-friendly regen; use cooldowns to slow.
     health_regeneration_rate: float = 1.0
     stag_health: int = 6
     hare_health: int = 1
     agent_health: int = 12
-    stag_regeneration_cooldown: int = 1
-    hare_regeneration_cooldown: int = 1
+    stag_regeneration_cooldown: int = 5
+    hare_regeneration_cooldown: int = 5
 
 
 @dataclass
@@ -339,12 +340,12 @@ def create_default_staghunt_config() -> ExperimentConfig:
             attack_radius=3,
             interaction_radius=3,
             attack_cost=0.05,
-            health_regeneration_rate=1.0,
+            health_regeneration_rate=0.5,
             stag_health=6,
             hare_health=1,
             agent_health=12,
-            stag_regeneration_cooldown=1,
-            hare_regeneration_cooldown=1,
+            stag_regeneration_cooldown=5,
+            hare_regeneration_cooldown=5,
         ),
         observation=ObservationConfig(
             vision_radius=5,
@@ -392,12 +393,12 @@ def create_map_based_staghunt_config(map_file: str = "simple_hunt.txt") -> Exper
             attack_radius=3,
             interaction_radius=3,
             attack_cost=0.05,
-            health_regeneration_rate=1.0,
+            health_regeneration_rate=0.5,
             stag_health=4,
             hare_health=2,
             agent_health=12,
-            stag_regeneration_cooldown=1,
-            hare_regeneration_cooldown=1,
+            stag_regeneration_cooldown=5,
+            hare_regeneration_cooldown=5,
         ),
         observation=ObservationConfig(
             vision_radius=5,
@@ -446,12 +447,12 @@ def create_competitive_staghunt_config() -> ExperimentConfig:
             attack_radius=3,
             interaction_radius=3,
             attack_cost=0.05,
-            health_regeneration_rate=1.0,
+            health_regeneration_rate=0.5,
             stag_health=6,
             hare_health=1,
             agent_health=12,
-            stag_regeneration_cooldown=1,
-            hare_regeneration_cooldown=1,
+            stag_regeneration_cooldown=5,
+            hare_regeneration_cooldown=5,
         ),
         observation=ObservationConfig(
             vision_radius=7,
@@ -509,12 +510,12 @@ def create_large_world_config(num_agents: int = 8, map_file: Optional[str] = Non
             attack_radius=3,
             interaction_radius=3,
             attack_cost=0.05,
-            health_regeneration_rate=1.0,
+            health_regeneration_rate=0.5,
             stag_health=6,
             hare_health=1,
             agent_health=12,
-            stag_regeneration_cooldown=1,
-            hare_regeneration_cooldown=1,
+            stag_regeneration_cooldown=5,
+            hare_regeneration_cooldown=5,
         ),
         observation=ObservationConfig(
             vision_radius=6,

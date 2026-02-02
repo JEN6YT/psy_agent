@@ -113,6 +113,8 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         self.attack_cooldown_timer = 0
         self.max_health = getattr(config.world, "agent_health", 5)
         self.health = self.max_health
+        # Agents can hunt stags by default; env can override per-agent.
+        self.can_hunt = True
 
     def reset(self) -> None:
         """Reset the agent for a new episode."""

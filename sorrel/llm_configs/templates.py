@@ -100,11 +100,28 @@ def system_staghunt(
     beam_length: int | None = None,
 ) -> str:
     tpl = PromptRegistry.get(PromptRegistry.STAG)
-    # stringify reward rule (pretty JSON for readability)
-    if isinstance(reward_rule, (dict, list)):
-        reward_rule_str = json.dumps(reward_rule, ensure_ascii=False, indent=2)
-    else:
-        reward_rule_str = str(reward_rule) if reward_rule else "Not specified."
+    # stringify reward rule in a compact, action-oriented format
+    def _format_reward_rule(rule: dict | list | str | None) -> str:
+        if isinstance(rule, dict):
+            lines: list[str] = []
+            params = rule.get("params", {})
+            hare = params.get("hare_reward", None)
+            stag = params.get("stag_reward", None)
+            if hare is not None or stag is not None:
+                lines.append(f"Rewards: hare={hare}, stag={stag}.")
+            for key in ("rules", "policy", "tips"):
+                items = rule.get(key, None)
+                if isinstance(items, (list, tuple)) and items:
+                    lines.append(f"{key.capitalize()}:")
+                    lines.extend(f"- {item}" for item in items)
+            if lines:
+                return "\n".join(lines)
+            return json.dumps(rule, ensure_ascii=False)
+        if isinstance(rule, (list, tuple)):
+            return "\n".join(f"- {item}" for item in rule)
+        return str(rule) if rule else "Not specified."
+
+    reward_rule_str = _format_reward_rule(reward_rule)
 
     return render(
         tpl,

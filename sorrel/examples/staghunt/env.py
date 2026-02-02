@@ -435,7 +435,8 @@ class StagHuntEnv:
                 if not isinstance(entity, (StagResource, HareResource)):
                     return
                 is_stag = isinstance(entity, StagResource)
-                should_harm = (not is_stag) or getattr(agent, "can_hunt", False)
+                # Default to allowing stag damage unless agent explicitly opts out.
+                should_harm = (not is_stag) or getattr(agent, "can_hunt", True)
 
                 if metrics is not None:
                     rtype = "stag" if is_stag else "hare"
@@ -821,12 +822,32 @@ class StagHuntEnv:
                     out.append((y, x))
         return out
 
+    def hare_states(self) -> List[Dict[str, int]]:
+        out: List[Dict[str, int]] = []
+        for y in range(self.world.height):
+            for x in range(self.world.width):
+                ent = self.world.observe((y, x, self.world.dynamic_layer))
+                if isinstance(ent, HareResource):
+                    hp = int(getattr(ent, "health", 0))
+                    out.append({"y": int(y), "x": int(x), "hp": hp})
+        return out
+
     def stag_positions(self) -> List[Tuple[int, int]]:
         out = []
         for y in range(self.world.height):
             for x in range(self.world.width):
                 if isinstance(self.world.observe((y, x, self.world.dynamic_layer)), StagResource):
                     out.append((y, x))
+        return out
+
+    def stag_states(self) -> List[Dict[str, int]]:
+        out: List[Dict[str, int]] = []
+        for y in range(self.world.height):
+            for x in range(self.world.width):
+                ent = self.world.observe((y, x, self.world.dynamic_layer))
+                if isinstance(ent, StagResource):
+                    hp = int(getattr(ent, "health", 0))
+                    out.append({"y": int(y), "x": int(x), "hp": hp})
         return out
 
     def beam_positions(self) -> List[Tuple[int, int, str]]:
@@ -851,27 +872,55 @@ class StagHuntEnv:
         w = config.get("world", {}) if isinstance(config, dict) else {}
         hare_reward = float(w.get("hare_reward", 2.0))
         stag_reward = float(w.get("stag_reward", 5.0))
+
+        agent_health = float(w.get("agent_health", 12))
+        hare_health = float(w.get("hare_health", 1))
+        stag_health = float(w.get("stag_health", 6))
+        attack_cost = float(w.get("attack_cost", 0.05))
+
+        regeneration_rate = float(w.get("regeneration_rate", 0.05))
+        stag_regeneration_cooldown = int(w.get("stag_regeneration_cooldown", 5))
+        hare_regeneration_cooldown = int(w.get("hare_regeneration_cooldown", 3))
+
         return {
-            "name": "staghunt_beam_kill_v1",
+            "name": "staghunt_beam_kill_v2",
             "params": {
                 "hare_reward": hare_reward,
                 "stag_reward": stag_reward,
+                "agent_health": agent_health,
+                "hare_health": hare_health,
+                "stag_health": stag_health,
+                "attack_cost": attack_cost,
             },
             "rules": [
-                "ATTACK (action 5) emits a short beam to destroy nearby HARE / STAG resources.",
-                "Rewards can only be obtained via ATTACK, which fires a beam forward in your current orientation.",
-                "When a resource is destroyed, all agents who attacked it during that turn receive an "
-                "equal share of its total reward (hare_reward or stag_reward).",
-                "A solo attacker receives the full reward; multiple attackers split the reward evenly.",
-                "Inventory records how many hare/stag kills you participated in (attacked).",
+                "When you choose to attack, the beam only fires forward and only hits within beam length.",
+                "Attacking with no hare/stag in beam is penalized.",
+                "Resource reward is hare_reward or stag_reward; if multiple attackers, split reward evenly.",
+                "Each resource (hare/stag) has HP. Each agent also has HP.",
+                f"Hare has {hare_health} HP; stag has {stag_health} HP.",
+                f"Agent starts with {agent_health} HP.",
+                "On a valid hit, hare/stag HP decreases by 1.",
+                "If resource HP <= 0, resource is defeated and removed; attackers share reward.",
+                f"If a hare is defeated, each attacker gains {hare_reward} / num_attackers reward.",
+                f"If a stag is defeated, each attacker gains {stag_reward} / num_attackers reward.",
+                f"When you attack (even if you hit), your HP decreases by 1, and your reward decreases by {attack_cost}.",   
+                "If hare/stag has HP below max, it can regenerate over time, ",
+                f"since last attck, starting after {hare_regeneration_cooldown} turns for hare and {stag_regeneration_cooldown} turns for stag, ",
+                f"with a regeneration rate of {regeneration_rate} per turn.",
+                "Once cooldown is satisfied, it regenerates each turn by (resource_regeneration_rate times health_regeneration_rate), up to max HP.",
+            ],
+            "policy": [
+                "If a hare/stag is within beam length AND in your facing direction, you can attack.",
+                "If a hare/stag is visible but not within beam length, move toward the nearest one (prefer stag if allies nearby or cooperating; otherwise hare).",
+                "Because reward is only on kill and resources may regenerate, prioritize finishing a low-HP target over random attacks.",
+                "If going for stag, coordinate so allies hit consistently enough to secure the kill before regeneration recovers HP.",  
+                "If nothing is visible; explore and avoid staying.",
             ],
             "tips": [
-                "HAREs are often safe solo targets if in beam; expected reward is about {hare_reward} when alone.",
-                "STAGs offer higher reward ({stag_reward}) but coordination improves expected value if allies likely attack.",
-                "If allies are nearby and signaling cooperation, consider moving to align on the same resource.",
-                "If no resource is in front of you within beam length, prefer to move around to explore rather than stay at the same place.",
-                "Use movement to scan new tiles and reposition; avoid staying idle for multiple turns unless a target is lined up.",
-                "When a resource is spotted but not in beam, step toward it until it is in beam, then ATTACK.",
+                "Stag is higher value than hare, and coordination increases expected reward.",
+                "Regeneration means partial progress can be lost, so consider focusing on finishing off targets.",
+                "Hare is safe individually; stag requires cooperation to avoid wasted attacks.",
+                "If a hare/stag is visible but not within beam length, step toward it until it is, then you can consider attack.",
             ],
         }
 

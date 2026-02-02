@@ -293,8 +293,8 @@ class StagHuntRunner:
                     }
                     for a in self.agents
                 ],
-                "hares": [{"y": int(y), "x": int(x)} for (y, x) in self.env.hare_positions()],
-                "stags": [{"y": int(y), "x": int(x)} for (y, x) in self.env.stag_positions()],
+                "hares": self.env.hare_states(),
+                "stags": self.env.stag_states(),
                 "beams": [
                     {"y": int(y), "x": int(x), "kind": kind}
                     for (y, x, kind) in self.env.beam_positions()
