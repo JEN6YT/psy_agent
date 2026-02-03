@@ -5,7 +5,7 @@ the Stag Hunt game, using the MessageBus for efficient message delivery.
 """
 
 from sorrel.action.action_spec import ActionSpec
-from sorrel.models.agents import LLMPlayer, resolve_model_class
+from sorrel.models.agents import LLMPlayer, resolve_model_class, parse_llm_fields
 from sorrel.llm_configs.observation.serializer import create_llm_observation_parser
 from sorrel.examples.staghunt.config import ExperimentConfig, create_default_staghunt_config
 from sorrel.agents.agent import LLMAgent
@@ -454,48 +454,17 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         Returns:
             Tuple of (action_id, message, notes)
         """
-        # Try JSON format first
-        try:
-            data = json.loads(llm_output)
-            action = int(data.get("ACTION", data.get("ACTION", 0)))
-            action = max(0, min(5, action))
-            
-            message = data.get("MESSAGE", data.get("message", None))
-            if message and isinstance(message, str):
-                message = message.strip()
-            else:
-                message = None
-            
-            # Extract notes from reasoning
-            reasoning = data.get("REASONING", "")
-            notes = self._extract_notes(reasoning)
-            
-            return action, message, notes
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass
-        
-        # Fallback: Parse plain text format
-        # Look for "ACTION: 3" or "action_id: 3" etc.
-        action_match = re.search(
-            r"action(?:_id)?\s*[:=]\s*(\d+)", 
-            llm_output, 
-            re.IGNORECASE
+        fields = parse_llm_fields(
+            llm_output,
+            action_space=6,
+            default_action=0,
         )
-        action = int(action_match.group(1)) if action_match else 0
-        action = max(0, min(5, action))
-        
-        # Look for "MESSAGE: ..."
-        message_match = re.search(
-            r"message\s*[:=]\s*(.+?)(?:\n|$)", 
-            llm_output, 
-            re.IGNORECASE
-        )
-        message = message_match.group(1).strip() if message_match else None
-        
-        # Extract notes from reasoning section
-        notes = self._extract_notes(llm_output)
-        
+        action = fields["ACTION"]
+        message = fields["MESSAGE"]
+        reasoning = fields["REASONING"] or ""
+        notes = self._extract_notes(reasoning or llm_output)
         return action, message, notes
+
 
     def _extract_notes(self, text: str) -> List[str]:
         """Extract short note keywords from reasoning text.

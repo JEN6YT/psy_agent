@@ -12,6 +12,108 @@ from sorrel.llm_configs.templates import (
 )
 
 
+def _extract_json_from_text(text: str) -> Optional[str]:
+    if not text:
+        return None
+    m = re.search(r"```(?:json)?\s*({.*?})\s*```", text, re.I | re.S)
+    if m:
+        return m.group(1)
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start != -1:
+        try:
+            _, end = decoder.raw_decode(text[start:])
+            return text[start:start + end]
+        except Exception:
+            start = text.find("{", start + 1)
+    return None
+
+
+def parse_llm_fields(
+    text: str,
+    *,
+    action_space: Optional[int] = None,
+    default_action: Optional[int] = None,
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "REASONING": None,
+        "ACTION": None,
+        "MESSAGE": None,
+        "CONFIDENCE": None,
+    }
+    if not text:
+        out["ACTION"] = default_action
+        return out
+
+    # JSON first
+    try:
+        json_text = _extract_json_from_text(text) or text
+        obj = json.loads(json_text)
+        if isinstance(obj, dict):
+            norm = {str(k).strip().lower(): v for k, v in obj.items()}
+            out["ACTION"] = norm.get("action", norm.get("action_id"))
+            out["MESSAGE"] = norm.get("message")
+            out["CONFIDENCE"] = norm.get("confidence", norm.get("conf"))
+            out["REASONING"] = norm.get("reasoning", norm.get("reason"))
+    except Exception:
+        pass
+
+    # Plain-text fallback
+    if out["ACTION"] is None:
+        m_act = re.search(r"\bACTION\s*[:=]\s*(\d+)", text, re.I)
+        if m_act:
+            out["ACTION"] = int(m_act.group(1))
+    if out["MESSAGE"] is None:
+        m_msg = re.search(r"\bMESSAGE\s*[:=]\s*(.+?)(?:\n|$)", text, re.I | re.S)
+        if m_msg:
+            out["MESSAGE"] = m_msg.group(1).strip()
+    if out["CONFIDENCE"] is None:
+        m_conf = re.search(r"\bCONFIDENCE\s*[:=]\s*(\d+)", text, re.I)
+        if m_conf:
+            out["CONFIDENCE"] = int(m_conf.group(1))
+    if out["REASONING"] is None:
+        m_reas = re.search(
+            r"\bREASONING\s*[:=]\s*(.*?)(?=\n\s*(ACTION|MESSAGE|CONFIDENCE)\b|$)",
+            text,
+            re.I | re.S,
+        )
+        if m_reas:
+            out["REASONING"] = m_reas.group(1).strip()
+
+    # Normalize types/values
+    if out["MESSAGE"] is not None:
+        msg = str(out["MESSAGE"]).strip()
+        out["MESSAGE"] = msg if msg else None
+    if out["CONFIDENCE"] is not None:
+        try:
+            out["CONFIDENCE"] = max(0, min(100, int(out["CONFIDENCE"])))
+        except Exception:
+            out["CONFIDENCE"] = None
+    if out["REASONING"] is not None and not isinstance(out["REASONING"], str):
+        out["REASONING"] = str(out["REASONING"]).strip()
+
+    if out["ACTION"] is None:
+        nums = re.findall(r"\b(\d+)\b", text)
+        if nums:
+            out["ACTION"] = int(nums[-1])
+
+    if out["ACTION"] is not None:
+        try:
+            a = int(out["ACTION"])
+            if action_space is not None:
+                a = max(0, min(action_space - 1, a))
+            else:
+                a = max(0, a)
+            out["ACTION"] = a
+        except Exception:
+            out["ACTION"] = None
+
+    if out["ACTION"] is None:
+        out["ACTION"] = default_action
+
+    return out
+
+
 class LLMPlayer(BaseModel):
     """Transformers-backed LLM player with comms + reputation integration."""
 
@@ -206,59 +308,19 @@ class LLMPlayer(BaseModel):
         return action
 
     def _extract_json_block(self, src: str) -> Optional[str]:
-            if not src:
-                return None
-            m = re.search(r"```(?:json)?\s*({.*?})\s*```", src, re.I | re.S)
-            if m:
-                return m.group(1)
-            start = src.find("{")
-            end = src.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                return src[start:end + 1]
-            return None
+        return _extract_json_from_text(src)
     
     def _parse_json_response(self, text: str):
         # returns (action:int, message:str|None, confidence:int|None, reasoning:str|None)
-
-        block = self._extract_json_block(text) or text
-
-        try:
-            obj = json.loads(block)
-            if isinstance(obj, dict):
-                norm = {str(k).strip().lower(): v for k, v in obj.items()}
-                action_val = norm.get("action", norm.get("action_id"))
-                msg_val = norm.get("message")
-                conf_val = norm.get("confidence", norm.get("conf"))
-                reas_val = norm.get("reasoning", norm.get("reason"))
-                a = self._sanitize_action(int(action_val)) if action_val is not None else None
-                m = (str(msg_val).strip()[:80]) if isinstance(msg_val, str) and msg_val.strip() else None
-                c = None
-                if conf_val is not None:
-                    try:
-                        c = max(0, min(100, int(conf_val)))
-                    except Exception:
-                        c = None
-                r = str(reas_val).strip() if isinstance(reas_val, str) else None
-                if a is not None:
-                    return a, m, c, r
-        except Exception:
-            pass
-
-        import re
-        m_act = re.search(r"\bACTION\s*[:=]\s*(\d+)", text, re.I)
-        if m_act:
-            a = self._sanitize_action(int(m_act.group(1)))
-            m_msg = re.search(r"\bMESSAGE\s*[:=]\s*(.+?)(?:\n|$)", text, re.I)
-            m_conf = re.search(r"\bCONFIDENCE\s*[:=]\s*(\d+)", text, re.I)
-            m_reas = re.search(r"\bREASONING\s*[:=]\s*(.+?)(?:\n|$)", text, re.I)
-            msg = m_msg.group(1).strip()[:80] if m_msg else None
-            conf = max(0, min(100, int(m_conf.group(1)))) if m_conf else None
-            reas = m_reas.group(1).strip() if m_reas else None
-            return a, msg, conf, reas
-
-        nums = re.findall(r"\b(\d+)\b", text)
-        a = self._sanitize_action(int(nums[-1])) if nums else 0
-        return a, None, None, None
+        fields = parse_llm_fields(
+            text,
+            action_space=self.action_space,
+            default_action=0,
+        )
+        msg = fields["MESSAGE"]
+        if isinstance(msg, str):
+            msg = msg.strip()[:80] if msg else None
+        return fields["ACTION"], msg, fields["CONFIDENCE"], fields["REASONING"]
 
     def generate_text(self, prompt: str, temperature: Optional[float] = None, max_tokens: Optional[int] = None) -> str:
         return self.generate(f"{self.system_prompt.strip()}\n\n{prompt.strip()}",

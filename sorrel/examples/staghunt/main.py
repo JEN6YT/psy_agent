@@ -29,6 +29,7 @@ from collections import defaultdict, deque
 from sorrel.examples.staghunt.entities import StagResource, HareResource
 from typing import Tuple
 from sorrel.agents.agent import InteractionEvidence
+from sorrel.models.agents import parse_llm_fields
 
 ORIENT_TO_FACING = {
     0: "back",   # north
@@ -116,50 +117,7 @@ class StagHuntRunner:
         self.bus.deliver(positions=positions, radius=self._radius)
 
     def _parse_llm_fields(self, text: str) -> Dict[str, Any]:
-        out: Dict[str, Any] = {
-            "REASONING": None,
-            "ACTION": None,
-            "MESSAGE": None,
-            "CONFIDENCE": None,
-        }
-        if not text:
-            return out
-
-        # JSON first
-        try:
-            obj = json.loads(text)
-            if isinstance(obj, dict):
-                norm = {str(k).strip().lower(): v for k, v in obj.items()}
-                out["ACTION"] = norm.get("action", norm.get("action_id"))
-                out["MESSAGE"] = norm.get("message")
-                out["CONFIDENCE"] = norm.get("confidence", norm.get("conf"))
-                out["REASONING"] = norm.get("reasoning", norm.get("reason"))
-        except Exception:
-            pass
-
-        # Plain-text fallback
-        if out["ACTION"] is None:
-            m_act = re.search(r"\bACTION\s*[:=]\s*(\d+)", text, re.I)
-            if m_act:
-                out["ACTION"] = int(m_act.group(1))
-        if out["MESSAGE"] is None:
-            m_msg = re.search(r"\bMESSAGE\s*[:=]\s*(.+?)(?:\n|$)", text, re.I | re.S)
-            if m_msg:
-                out["MESSAGE"] = m_msg.group(1).strip()
-        if out["CONFIDENCE"] is None:
-            m_conf = re.search(r"\bCONFIDENCE\s*[:=]\s*(\d+)", text, re.I)
-            if m_conf:
-                out["CONFIDENCE"] = int(m_conf.group(1))
-        if out["REASONING"] is None:
-            m_reas = re.search(
-                r"\bREASONING\s*[:=]\s*(.*?)(?=\n\s*(ACTION|MESSAGE|CONFIDENCE)\b|$)",
-                text,
-                re.I | re.S,
-            )
-            if m_reas:
-                out["REASONING"] = m_reas.group(1).strip()
-
-        return out
+        return parse_llm_fields(text, default_action=None)
 
     def _reasoning_fields_for_agent(self, agent: StagHuntLLMAgent, raw: str) -> Dict[str, Any]:
         lp = getattr(agent.model, "last_parsed", {}) or {}
@@ -174,10 +132,10 @@ class StagHuntRunner:
                 return fields
         parsed = self._parse_llm_fields(raw)
         return {
-            "REASONING": lp.get("REASONING") if lp else parsed.get("REASONING"),
-            "ACTION": lp.get("ACTION") if lp else parsed.get("ACTION"),
-            "MESSAGE": lp.get("MESSAGE") if lp else parsed.get("MESSAGE"),
-            "CONFIDENCE": lp.get("CONFIDENCE") if lp else parsed.get("CONFIDENCE"),
+            "REASONING": (lp.get("REASONING") if lp and lp.get("REASONING") is not None else parsed.get("REASONING")),
+            "ACTION": (lp.get("ACTION") if lp and lp.get("ACTION") is not None else parsed.get("ACTION")),
+            "MESSAGE": (lp.get("MESSAGE") if lp and lp.get("MESSAGE") is not None else parsed.get("MESSAGE")),
+            "CONFIDENCE": (lp.get("CONFIDENCE") if lp and lp.get("CONFIDENCE") is not None else parsed.get("CONFIDENCE")),
         }
 
     def _parse_commitment(self, text: str | None) -> str | None:

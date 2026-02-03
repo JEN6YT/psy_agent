@@ -10,6 +10,128 @@
 ## Action Available
 {action_table}
 
+## An example and corresponding reasoning process you can refer to
+
+For example, you receive the following observation:
+Turn: 12 / 50
+Your position: (row=3, col=2)
+Your orientation: east
+Your health(HP): 12
+Hare at position (3,6), HP = 2
+Ally agent at (3,5), HP = 11
+Stag at (1,2), HP = 4
+
+You should consider those config numbers used in reasoning (they are given to you):
+- hare_reward = 1.0, stag_reward = 5.0
+- attack_cost = 0.05 and when you attack your HP decreases by 1
+- hare HP max = 2, stag HP max = 4
+- hare_regeneration_cooldown = 5, stag_regeneration_cooldown = 5
+- health_regeneration_rate = 0.5 HP/turn after cooldown
+
+Available actions:
+a = 0: stay, your position and orientation does not change
+a = 1: up, you move up (y axis decreases by 1) and orientation does not change  
+a = 2: right, you move to the right (x axis increases by 1) and orientation becomes east
+a = 3: down, you move down (y axis increases by 1) and orientation becomes south
+a = 4: left, you move to the right (x axis decreases by 1) and orientation becomes west
+a = 5: attack, you do not move, you fire a beam in your current orientation, beam only hits targets directly in front of you and within beam length
+
+Reasoning:
+Step 0: Compute what tiles are hittable RIGHT NOW
+- Facing east at (3,2) with beam length 3, beam tiles are:
+  (3,3), (3,4), (3,5)
+- Hare at (3,6) is distance 4 so NOT hittable now
+- Stag at (1,2) is not in front of you (different row): NOT hittable now
+Conclusion: action a=5 (attack) would be wasted now.
+
+Case 1: You choose action a = 5 (attack), it is wasted
+- You know beam length is 3.
+- Facing east, your beam covers tiles (3,3), (3,4), (3,5)
+- The hare at (3,6) is visible but NOT in beam range
+- No target is hit
+Result:
+- Position remains (3,2)
+- Your HP: 12 -> 11
+- Hare HP: unchanged (2)
+- Reward change: −0.05
+- No resource reward is granted
+Therefore, you know you should move closer to the hare by going to the right.
+
+Step 1: Choose movement target (hare vs stag) before attacking
+
+Reasoning checklist:
+1. Time-to-first-hit:
+  - Hare: from (3,2) facing east, 1 move right puts hare at distance 3 (attackable next turn).
+  - Stag: at (1,2), requires multiple moves, turns, and perhaps collaborating with allies before any hit.
+  Therefore, Hare is faster to start damaging.
+
+2. Hits required to kill:
+  - Hare needs 2 hits total (HP=2).
+  - Stag needs 4 hits total (HP=4).
+  Therefore, Hare is faster to finish.
+
+3. Regeneration risk:
+  - After you damage a target, it can start regenerating after 5 turns without being attacked.
+  - Regen rate is 0.5 HP/turn, so a target can recover quickly once regen starts.
+  - If you cannot finish before regen begins (or you get interrupted), partial damage is wasted.
+  Therefore, Short fights are strongly preferred.
+
+4. Expected reward vs risk:
+  - Stag reward is higher (5.0) but is slower and often needs coordination to finish reliably.
+  - Hare reward is smaller (1.0) but is highly reliable and can be secured quickly.
+  - In this exact state, hare has higher immediate expected reward.
+
+Decision:
+Move toward the hare first (secure a fast, reliable kill) rather than commit to a longer stag chase.
+
+
+Case 2: You choose a=2 (right) to align hare into beam
+Result:
+- New position: (3,3)
+- Orientation becomes east
+- Your HP remains 12
+- Reward change: 0
+Beam recomputation:
+- From (3,3) facing east, beam tiles are (3,4),(3,5),(3,6)
+- Hare at (3,6) is now within beam length
+Conclusion:
+- You can validly attack the hare next turn.
+
+
+Then, in the next turn, you can choose a=5 (attack) again to finish the hare
+Turn 15:
+The environment advances to the next turn after Case 2.
+
+Current state at start of Turn 15:
+- Your position: (3,3)
+- Your orientation: east
+- Your HP: 11
+- Hare position: (3,6), HP = 1
+- Beam length: 3
+
+Action:
+- Choose a = 5 (attack)
+
+Reasoning:
+- You are still facing east.
+- Your beam covers tiles (3,4), (3,5), (3,6).
+- The hare at (3,6) is directly in front of you and within beam range.
+- Attacking now will reduce hare HP to 0 before regeneration can occur.
+
+Result:
+- Position remains (3,3)
+- Orientation remains east
+- Your HP: 11 -> 10
+- Hare HP: 1 -> 0 (defeated and removed)
+- Reward change: -0.05 + 1.0
+
+Net outcome over Turns 14–15:
+- One right turn and then attack
+- Total attack cost: -0.05
+- Hare reward gained: +1.0
+- Net reward: +0.90
+
+
 ---
 
 ## Response Format
