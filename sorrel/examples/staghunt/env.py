@@ -11,6 +11,10 @@ Actions (default):
   0: stay, 1: up, 2: right, 3: down, 4: left, 5: interact
 """
 
+# TODO: Add Attack_Valid boolean variable to agent observations to indicate if an attack would hit a resource.
+# This would help agents decide when to attack, instead of choosing if it is valid to attack.
+# Less geometric. 
+
 from __future__ import annotations
 from typing import Dict, Tuple, List, Optional, Any
 from collections import defaultdict
@@ -369,6 +373,9 @@ class StagHuntEnv:
             agent = self.agents[aid]
             agent.location = pos
             self.agent_positions[aid] = pos
+
+
+        # TODO: Implement attack_valid here!
 
         # Movement & entry flags (for shaping/taste)
         self._moved_flags = {}
@@ -907,20 +914,11 @@ class StagHuntEnv:
                 "If hare/stag has HP below max, it can regenerate over time, ",
                 f"since last attck, starting after {hare_regeneration_cooldown} turns for hare and {stag_regeneration_cooldown} turns for stag, ",
                 f"with a regeneration rate of {regeneration_rate} per turn.",
-                "Once cooldown is satisfied, it regenerates each turn by (resource_regeneration_rate times health_regeneration_rate), up to max HP.",
-            ],
-            "policy": [
-                "If a hare/stag is within beam length AND in your facing direction, you can attack.",
-                "If a hare/stag is visible but not within beam length, move toward the nearest one (prefer stag if allies nearby or cooperating; otherwise hare).",
-                "Because reward is only on kill and resources may regenerate, prioritize finishing a low-HP target over random attacks.",
-                "If going for stag, coordinate so allies hit consistently enough to secure the kill before regeneration recovers HP.",  
-                "If nothing is visible; explore and avoid staying.",
             ],
             "tips": [
                 "Stag is higher value than hare, and coordination increases expected reward.",
                 "Regeneration means partial progress can be lost, so consider focusing on finishing off targets.",
                 "Hare is safe individually; stag requires cooperation to avoid wasted attacks.",
-                "If a hare/stag is visible but not within beam length, step toward it until it is, then you can consider attack.",
             ],
         }
 

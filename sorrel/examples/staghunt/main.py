@@ -465,7 +465,7 @@ if __name__ == "__main__":
     )
 
     # gpt model
-    # agents, message_bus, reputation = create_agent_team(
+    # agents, bus, rep = create_agent_team(
     #     num_agents=2,
     #     model_name="openai:gpt-4o",   # Required to trigger API path
     #     api_provider="openai",        # Required
