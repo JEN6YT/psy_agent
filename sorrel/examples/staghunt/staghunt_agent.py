@@ -19,7 +19,9 @@ from sorrel.examples.staghunt.entities import AttackBeam
 
 import json
 import os
+import random
 import re
+from collections import defaultdict, deque
 from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 
@@ -31,6 +33,77 @@ ACTION_DESCRIPTIONS = [
     "left — move one tile to the left (west)",      # 4
     "attack - attack resources with beam "   # 5
 ]
+
+ATTACK = 5
+MOVES = (1, 2, 3, 4)
+
+class AntiStallPolicy:
+    def __init__(self, seed: int = 0) -> None:
+        self._rng = random.Random(seed)
+        self._last_actions: Dict[int, deque[int]] = defaultdict(lambda: deque(maxlen=2))
+        self._last_pos: Dict[int, Tuple[int, int]] = {}
+        self._last_visible_target_count: Dict[int, int] = {}
+
+    def reset(self) -> None:
+        self._last_actions.clear()
+        self._last_pos.clear()
+        self._last_visible_target_count.clear()
+        
+    def filter_action(
+        self,
+        agent_id: int,
+        proposed_action: int,
+        attack_valid: bool,
+        pos_rc: Tuple[int, int],
+        visible_target_count: int,
+    ) -> int:
+        final_action = proposed_action
+
+        # 1) Enforce legality only: if ATTACK is invalid, do NOT attack.
+        if final_action == ATTACK and not attack_valid:
+            # Prefer repeating the last non-attack (keeps policy more consistent),
+            # otherwise pick a random movement.
+            last_non_attack = getattr(self, "_last_non_attack_action", {}).get(agent_id)
+            if last_non_attack in MOVES:
+                final_action = last_non_attack
+            else:
+                final_action = MOVES[self._rng.randrange(len(MOVES))]
+
+        # 2) Anti-stuck: if repeating the same MOVE 3 times with no progress, jitter.
+        history = self._last_actions[agent_id]
+        if (
+            final_action in MOVES
+            and len(history) == 2
+            and history[0] == history[1] == final_action
+        ):
+            last_pos = self._last_pos.get(agent_id)
+            last_count = self._last_visible_target_count.get(agent_id)
+
+            pos_unchanged = (last_pos == pos_rc) if last_pos is not None else False
+            count_unchanged = (
+                last_count == visible_target_count
+                if last_count is not None
+                else False
+            )
+
+            # You can make this stricter by using `and` instead of `or`.
+            if pos_unchanged or count_unchanged:
+                alternatives = [a for a in MOVES if a != final_action]
+                if alternatives:
+                    final_action = alternatives[self._rng.randrange(len(alternatives))]
+
+        # 3) Bookkeeping
+        self._last_actions[agent_id].append(final_action)
+        self._last_pos[agent_id] = pos_rc
+        self._last_visible_target_count[agent_id] = visible_target_count
+
+        # Track last non-attack action for better fallback behavior.
+        if not hasattr(self, "_last_non_attack_action"):
+            self._last_non_attack_action = {}
+        if final_action != ATTACK:
+            self._last_non_attack_action[agent_id] = final_action
+
+        return final_action
 
 
 class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
@@ -115,11 +188,15 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         self.health = self.max_health
         # Agents can hunt stags by default; env can override per-agent.
         self.can_hunt = True
+        self._anti_stall = AntiStallPolicy(seed=1337 + agent_id)
+        self._last_obs_meta: Dict[str, Any] = {}
 
     def reset(self) -> None:
         """Reset the agent for a new episode."""
         super().reset()
         self.health = self.max_health
+        self._anti_stall.reset()
+        self._last_obs_meta = {}
         # Note: message_bus.reset() should be called by the environment runner
 
     def _get_nearby_agents(self, world: StagHuntEnv) -> List[Dict[str, Any]]:
@@ -220,14 +297,21 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
                 parts.append(f"right {dx}")
             return ", ".join(parts) if parts else "here"
 
-        dy, dx = ORIENTATION_VECTORS[self.orientation]
+        ody, odx = ORIENTATION_VECTORS[self.orientation]
         facing_dir = {
-            (-1, 0): "north",
-            (0, 1): "east",
-            (1, 0): "south",
-            (0, -1): "west",
-        }.get((dy, dx), f"({dy}, {dx})")
+            (-1, 0): "NORTH",
+            (0, 1): "EAST",
+            (1, 0): "SOUTH",
+            (0, -1): "WEST",
+        }.get((ody, odx), "NORTH")
         lines.append(f"Facing direction (beam): {facing_dir}")
+
+        beam_length = int(getattr(world, "beam_length", 3))
+        beam_tiles = world.beam_tiles((y, x), facing_dir, beam_length)
+        lines.append(f"POS_RC: ({y}, {x})")
+        lines.append(f"ORIENTATION: {facing_dir}")
+        lines.append(f"BEAM_LEN: {beam_length}")
+        lines.append(f"BEAM_TILES_RC: {beam_tiles}")
 
         # Nearby agents (square vision radius)
         nearby_agent_positions = []
@@ -287,6 +371,7 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         # Nearby resources (square vision radius)
         hare_positions = []
         stag_positions = []
+        visible_targets: List[Dict[str, Any]] = []
         stag_adjacent = False
         for dy in range(-vision_radius, vision_radius + 1):
             for dx in range(-vision_radius, vision_radius + 1):
@@ -296,17 +381,24 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
                 ent = world.world.observe((ny, nx, world.world.dynamic_layer))
                 if isinstance(ent, HareResource):
                     hare_positions.append((ny, nx))
+                    tgt = {"type": "hare", "pos_rc": (ny, nx)}
+                    if hasattr(ent, "health"):
+                        tgt["hp"] = int(ent.health)
+                    visible_targets.append(tgt)
                 elif isinstance(ent, StagResource):
                     stag_positions.append((ny, nx))
                     if abs(dy) + abs(dx) == 1:
                         stag_adjacent = True
+                    tgt = {"type": "stag", "pos_rc": (ny, nx)}
+                    if hasattr(ent, "health"):
+                        tgt["hp"] = int(ent.health)
+                    visible_targets.append(tgt)
 
         # Beam reach info to mark resources in range (unchanged logic).
-        beam_length = int(getattr(world, "beam_length", 3))
         beam_hare_positions = set()
         beam_stag_positions = set()
         for i in range(1, beam_length + 1):
-            ty, tx = y + dy * i, x + dx * i
+            ty, tx = y + ody * i, x + odx * i
             if not world.is_valid_location((ty, tx)):
                 continue
             ent = world.world.observe((ty, tx, world.world.dynamic_layer))
@@ -314,6 +406,15 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
                 beam_hare_positions.add((ty, tx))
             elif isinstance(ent, StagResource):
                 beam_stag_positions.add((ty, tx))
+
+        attack_valid, hittable_targets = world.compute_attack_valid(
+            (y, x),
+            facing_dir,
+            beam_length,
+            visible_targets,
+        )
+        lines.append(f"HITTABLE_TARGETS: {json.dumps(hittable_targets, ensure_ascii=False)}")
+        lines.append(f"ATTACK_VALID: {str(attack_valid).lower()}")
 
         if hare_positions:
             hare_positions.sort()
@@ -370,6 +471,16 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         # elif nearby["stag_adjacent"] and not nearby_agents:
         #     lines.append("TIP: STAG nearby but no allies in sight. Find allies or hunt HARE.")
         
+        self._last_obs_meta = {
+            "pos_rc": (y, x),
+            "orientation": facing_dir,
+            "beam_len": beam_length,
+            "beam_tiles_rc": beam_tiles,
+            "visible_target_count": len(visible_targets),
+            "attack_valid": attack_valid,
+            "hittable_targets": hittable_targets,
+        }
+
         return "\n".join(lines)
 
     def format_observation_with_context(self, world: StagHuntEnv) -> str:
@@ -422,13 +533,24 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
 
         return observation_text
 
-    def get_action(self, state_text: str) -> int:
+    def get_action(self, state_text: str, obs_meta: Optional[Dict[str, Any]] = None) -> int:
         # include memory + reputation in context (model assembles it too)
         memory_ctx = self.model.get_context_prompt(recent_steps=6, top_agents=3)
 
         # Query the model. This records action + self.model.last_message internally.
         action = self.model.take_action(state_text, context=memory_ctx)
         action = max(0, min(5, int(action)))
+
+        meta = obs_meta or self._last_obs_meta or {}
+        pos_rc = meta.get("pos_rc")
+        if isinstance(pos_rc, (list, tuple)) and len(pos_rc) == 2:
+            action = self._anti_stall.filter_action(
+                agent_id=self.agent_id,
+                proposed_action=action,
+                attack_valid=bool(meta.get("attack_valid", False)),
+                pos_rc=(int(pos_rc[0]), int(pos_rc[1])),
+                visible_target_count=int(meta.get("visible_target_count", 0)),
+            )
 
         # Surface an outbound message to the bus if present
         self.current_message = getattr(self.model, "last_message", None)
@@ -556,7 +678,7 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         self.last_state_text = state_text
         
         # Get action from LLM (also sets self.current_message and queues to message bus)
-        action = self.get_action(state_text)
+        action = self.get_action(state_text, obs_meta=self._last_obs_meta)
         self.last_action = action
         
         # The environment runner will:

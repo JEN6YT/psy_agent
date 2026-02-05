@@ -703,6 +703,47 @@ class StagHuntEnv:
     # -----------------------------
     # Observations
     # -----------------------------
+    def beam_tiles(
+        self,
+        pos_rc: Tuple[int, int],
+        facing: int | str,
+        beam_len: int,
+    ) -> List[Tuple[int, int]]:
+        r, c = pos_rc
+        if isinstance(facing, str):
+            f = facing.strip().upper()
+            dir_map = {
+                "NORTH": (-1, 0),
+                "EAST": (0, 1),
+                "SOUTH": (1, 0),
+                "WEST": (0, -1),
+            }
+            dr, dc = dir_map.get(f, ORIENTATION_VECTORS.get(0))
+        else:
+            dr, dc = ORIENTATION_VECTORS.get(int(facing), (-1, 0))
+        return [(r + dr * i, c + dc * i) for i in range(1, int(beam_len) + 1)]
+
+    def compute_attack_valid(
+        self,
+        pos_rc: Tuple[int, int],
+        facing: int | str,
+        beam_len: int,
+        targets: List[Dict[str, Any]],
+    ) -> Tuple[bool, List[Dict[str, Any]]]:
+        tiles = set(self.beam_tiles(pos_rc, facing, beam_len))
+        hittable: List[Dict[str, Any]] = []
+        for tgt in targets:
+            pos = tgt.get("pos_rc")
+            if pos is None:
+                continue
+            try:
+                pos_tuple = (int(pos[0]), int(pos[1]))
+            except Exception:
+                continue
+            if pos_tuple in tiles:
+                hittable.append(tgt)
+        return bool(hittable), hittable
+
     def _get_observations(self) -> Dict[int, Dict[str, Any]]:
         obs: Dict[int, Dict[str, Any]] = {}
         for aid in range(self.num_agents):

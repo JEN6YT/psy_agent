@@ -457,23 +457,23 @@ if __name__ == "__main__":
             config.world.num_agents = 6
 
     # Create team of N agents with shared MessageBus and Reputation
-    agents, bus, rep = create_agent_team(
-        num_agents=2,
-        model_name="Qwen/Qwen2.5-3B-Instruct",
-        config=config,
-        verbose=True
-    )
-
-    # gpt model
     # agents, bus, rep = create_agent_team(
     #     num_agents=2,
-    #     model_name="openai:gpt-4o",   # Required to trigger API path
-    #     api_provider="openai",        # Required
-    #     api_model="gpt-4o",           # Actual OpenAI model string
-    #     api_key="sk-proj-lgRKRdHE7lPX1f0C3uVX10q1oHveWxfrQnHutk184tnXjzR77aSBUG57s1KXNLL4QWiDFBurSaT3BlbkFJrv4I4wloevg-KGGRX8_Bj-wPIAkEPBsx6MRfB4NddG4HMsN0SpEX6YzoUMO-OHyEQYB6My4n4AY",
-    #     temperature=0.1,
-    #     max_tokens=512,
+    #     model_name="Qwen/Qwen2.5-3B-Instruct",
+    #     config=config,
+    #     verbose=True
     # )
+
+    # gpt model
+    agents, bus, rep = create_agent_team(
+        num_agents=2,
+        model_name="openai:gpt-4o",   # Required to trigger API path
+        api_provider="openai",        # Required
+        api_model="gpt-4o",           # Actual OpenAI model string
+        api_key="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",
+        temperature=0.1,
+        max_tokens=512,
+    )
 
 
     # Create environment and ensure it uses the same bus

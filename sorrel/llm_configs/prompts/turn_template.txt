@@ -11,9 +11,9 @@
 {action_table}
 - a = 0: stay, your position and orientation does not change
 - a = 1: up, you move up (y axis decreases by 1) and orientation does not change  
-- a = 2: right, you move to the right (x axis increases by 1) and orientation becomes east
+- a = 2: right, you move right (x axis increases by 1) and orientation becomes east
 - a = 3: down, you move down (y axis increases by 1) and orientation becomes south
-- a = 4: left, you move to the right (x axis decreases by 1) and orientation becomes west
+- a = 4: left, you move left (x axis decreases by 1) and orientation becomes west
 - a = 5: attack, you do not move, you fire a beam in your current orientation, beam only hits targets directly in front of you and within beam length
 
 ---
