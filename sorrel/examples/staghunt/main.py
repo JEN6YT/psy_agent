@@ -463,6 +463,9 @@ if __name__ == "__main__":
     #     config=config,
     #     verbose=True
     # )
+    # Alternatively, model_name
+    # "mistralai/Mistral-7B-Instruct-v0.3"
+    # ""
 
     # gpt model
     agents, bus, rep = create_agent_team(

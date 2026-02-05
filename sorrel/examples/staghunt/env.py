@@ -978,7 +978,7 @@ class StagHuntEnv:
         for oid, (oy, ox, _) in self.agent_positions.items():
             if oid == agent_id:
                 continue
-            if abs(ay - oy) <= r and abs(ax - ox) <= r:
+            if (abs(ay - oy) + abs(ax - ox)) <= r:
                 return True
         return False
 

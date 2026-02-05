@@ -52,9 +52,8 @@ Before choosing an action, you must internally perform:
 
 
 ## Communication
-In the Observation, if "Nearby agents within vision" is NOT "none", you may send a short message (<=5 words) to indicate your current intent or plan.
-Messages are optional. Use them if they help convey what you intend to do next.
-If communication is not useful for your current decision, leave MESSAGE empty.
+In the Observation, if "Nearby agents within vision" is NOT "none", you should usually send a short message (<=5 words) to indicate your current intent or plan in the MESSAGE field.
+Use them if they help convey what you intend to do next. If messaging might not reasonably affect or be affected by another agent’s decision (e.g., your action is independent of nearby agents), leave it empty.
 
 ## Reward Summary
 {reward_rule}

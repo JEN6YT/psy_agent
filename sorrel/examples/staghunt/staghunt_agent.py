@@ -308,7 +308,7 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
 
         beam_length = int(getattr(world, "beam_length", 3))
         beam_tiles = world.beam_tiles((y, x), facing_dir, beam_length)
-        lines.append(f"POS_RC: ({y}, {x})")
+        lines.append(f"POS_RC (Your current position): ({y}, {x})")
         lines.append(f"ORIENTATION: {facing_dir}")
         lines.append(f"BEAM_LEN: {beam_length}")
         lines.append(f"BEAM_TILES_RC: {beam_tiles}")
