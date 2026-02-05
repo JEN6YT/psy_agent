@@ -473,6 +473,10 @@ class StagHuntEnv:
 
             if getattr(agent, "health", None) is None:
                 agent.health = getattr(world, "agent_health", 5)
+            # If agent is out of HP, it cannot attack.
+            if int(agent.health) <= 0:
+                agent.health = max(0, int(agent.health))
+                continue
             agent.health = max(0, int(agent.health) - 1)
 
             if metrics is not None:

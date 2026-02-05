@@ -52,7 +52,9 @@ Before choosing an action, you must internally perform:
 
 
 ## Communication
-If an ally is nearby, send a short (<=5 words) coordination message.
+In the Observation, if "Nearby agents within vision" is NOT "none", you may send a short message (<=5 words) to indicate your current intent or plan.
+Messages are optional. Use them if they help convey what you intend to do next.
+If communication is not useful for your current decision, leave MESSAGE empty.
 
 ## Reward Summary
 {reward_rule}
