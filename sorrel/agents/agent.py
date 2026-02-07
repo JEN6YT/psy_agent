@@ -413,11 +413,17 @@ class LLMAgent[W: Gridworld](Entity[W]):
         # Build reflection prompt
         episode_steps = self.model.episodic_memory.get_steps()
         total_reward = sum(step.reward for step in episode_steps)
+        inv = getattr(self, "inventory", {"hare": 0, "stag": 0})
+        episode_attacks = int(getattr(self, "episode_attack_count", 0))
+        episode_messages_sent = int(getattr(self, "episode_messages_sent", 0))
         
         reflection_prompt = f"""
 You are Agent {self.agent_id}. The episode just ended.
 Total reward: {total_reward}
 Number of turns: {len(episode_steps)}
+Final inventory: hare={int(inv.get("hare", 0))}, stag={int(inv.get("stag", 0))}
+Number of attacks: {episode_attacks}
+Number of messages sent: {episode_messages_sent}
 
 Recent interactions:
 {self.model.episodic_memory.recent_text(k=10)}

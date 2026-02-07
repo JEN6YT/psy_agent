@@ -190,6 +190,8 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         self.can_hunt = True
         self._anti_stall = AntiStallPolicy(seed=1337 + agent_id)
         self._last_obs_meta: Dict[str, Any] = {}
+        self.episode_attack_count: int = 0
+        self.episode_messages_sent: int = 0
 
     def reset(self) -> None:
         """Reset the agent for a new episode."""
@@ -197,6 +199,8 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         self.health = self.max_health
         self._anti_stall.reset()
         self._last_obs_meta = {}
+        self.episode_attack_count = 0
+        self.episode_messages_sent = 0
         # Note: message_bus.reset() should be called by the environment runner
 
     def _get_nearby_agents(self, world: StagHuntEnv) -> List[Dict[str, Any]]:
@@ -552,10 +556,9 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
                 visible_target_count=int(meta.get("visible_target_count", 0)),
             )
 
-        # Surface an outbound message to the bus if present
+        # Surface outbound message for the runner to gate + queue.
+        # Do not queue here to avoid duplicate sends and neighbor-gate bypass.
         self.current_message = getattr(self.model, "last_message", None)
-        if self.message_bus and self.current_message:
-            self.message_bus.queue(self.agent_id, self.current_message)
 
         return action
 
@@ -716,6 +719,11 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         if confidence is not None:
             notes.append(f"confidence={confidence}")
         notes.append(f"turn={getattr(self, 'turn_count', None)}")
+        inv = new_obs.get("inventory", {}) if isinstance(new_obs, dict) else {}
+        notes.append(f"inventory_hare={int(inv.get('hare', 0))}")
+        notes.append(f"inventory_stag={int(inv.get('stag', 0))}")
+        notes.append(f"episode_attacks={int(getattr(self, 'episode_attack_count', 0))}")
+        notes.append(f"episode_messages_sent={int(getattr(self, 'episode_messages_sent', 0))}")
 
         # Fall back to lightweight parse if you didn’t use last_parsed
         if not reasoning and raw:

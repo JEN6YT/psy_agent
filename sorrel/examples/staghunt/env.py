@@ -462,9 +462,17 @@ class StagHuntEnv:
 
                     if metrics is not None:
                         rtype = "stag" if is_stag else "hare"
-                        metrics.collect_resource_defeat_metrics(
-                            agent, reward_map.get(agent.agent_id, 0.0), rtype
-                        )
+                        if hasattr(metrics, "collect_resource_defeat_event"):
+                            metrics.collect_resource_defeat_event(
+                                attackers=attackers,
+                                reward_map=reward_map,
+                                resource_type=rtype,
+                                turn=getattr(world, "current_turn", None),
+                            )
+                        else:
+                            metrics.collect_resource_defeat_metrics(
+                                agent, reward_map.get(agent.agent_id, 0.0), rtype
+                            )
 
             # cooldown check
             if getattr(agent, "attack_cooldown_timer", 0) > 0:

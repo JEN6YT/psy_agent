@@ -16,6 +16,7 @@ import json
 import time
 import re
 from pathlib import Path
+from dotenv import load_dotenv
 
 from sorrel.examples.staghunt.env import StagHuntEnv
 from sorrel.examples.staghunt.staghunt_agent import StagHuntLLMAgent
@@ -29,6 +30,7 @@ from collections import defaultdict, deque
 from sorrel.examples.staghunt.entities import StagResource, HareResource
 from typing import Tuple
 from sorrel.agents.agent import InteractionEvidence
+from sorrel.evaluation.staghunt_metrics import StagHuntMetricsCollector, evaluate_staghunt
 from sorrel.models.agents import parse_llm_fields
 
 ORIENT_TO_FACING = {
@@ -166,6 +168,8 @@ class StagHuntRunner:
         # Deliver anything queued before the first step (typically none)
         self._deliver_bus_now()
 
+        metrics_collector = getattr(self.env, "metrics_collector", None)
+
         while not done and step_count < max_steps:
             if verbose:
                 print(f"\n{'='*60}\nStep {step_count + 1}\n{'='*60}")
@@ -173,7 +177,6 @@ class StagHuntRunner:
             # ---- phase 1: agents decide (choose action & optionally queue a message) ----
             actions: Dict[int, int] = {}
             llm_responses: Dict[int, str] = {}
-
             for agent in self.agents:
                 # Agent builds a contextual observation and chooses an action.
                 agent.transition(self.env)  # sets agent.last_action and may set agent.current_message
@@ -181,6 +184,8 @@ class StagHuntRunner:
                 if action is None:
                     action = 0  # safe default
                 actions[agent.agent_id] = int(action)
+                if int(action) == 5:
+                    agent.episode_attack_count = int(getattr(agent, "episode_attack_count", 0)) + 1
 
                 # Capture the last LLM response if available (for logging/memory)
                 hist = getattr(agent.model, "conversation_history", None)
@@ -195,11 +200,27 @@ class StagHuntRunner:
                 if msg and self.env.has_neighbor_within_radius(agent.agent_id, getattr(self.env, "vision_radius", 3)):
                     payload = msg if isinstance(msg, dict) else {"text": str(msg)}
                     self.bus.queue(sender_id=agent.agent_id, message=payload)
+                    agent.episode_messages_sent = int(getattr(agent, "episode_messages_sent", 0)) + 1
+                    if metrics_collector is not None:
+                        msg_text = payload.get("text", "") if isinstance(payload, dict) else str(payload)
+                        if msg_text:
+                            metrics_collector.record_message_for_episode(agent.agent_id, msg_text)
                 else:
                     agent.current_message = None
 
                 if verbose:
                     print(f"Agent {agent.agent_id}: action={actions[agent.agent_id]}, msg={getattr(agent, 'current_message', None)}")
+
+                # Reasoning scoring (full raw response per decision/turn)
+                if metrics_collector is not None:
+                    raw_response = ""
+                    lp = getattr(agent.model, "last_parsed", {}) or {}
+                    if isinstance(lp, dict):
+                        raw_response = lp.get("RAW") or ""
+                    if not raw_response:
+                        raw_response = llm_responses.get(agent.agent_id, "")
+                    if raw_response:
+                        metrics_collector.record_reasoning_for_episode(agent.agent_id, raw_response)
 
             # ---- phase 2: env step (simultaneous action resolution) ----
             ordered_ids = [a.agent_id for a in self.agents]
@@ -427,12 +448,47 @@ class StagHuntRunner:
 
     def run_multiple_episodes(self, num_episodes: int, max_steps: int = 100, verbose: bool = False) -> List[dict]:
         all_stats: List[dict] = []
+        metrics_collector = getattr(self.env, "metrics_collector", None)
+        reward_rules = self.env.reward_rules_json() if hasattr(self.env, "reward_rules_json") else {}
         for ep in range(num_episodes):
+            if metrics_collector is not None:
+                metrics_collector.start_episode(ep, [a.agent_id for a in self.agents])
             if verbose:
                 print(f"\n{'#'*60}\nEPISODE {ep + 1}/{num_episodes}\n{'#'*60}")
             stats = self.run_episode(max_steps=max_steps, verbose=verbose, episode_idx=ep)
             stats["episode_num"] = ep + 1
             all_stats.append(stats)
+            if metrics_collector is not None:
+                inventory_by_agent = {
+                    a.agent_id: {
+                        "hare": int(getattr(a, "inventory", {}).get("hare", 0)),
+                        "stag": int(getattr(a, "inventory", {}).get("stag", 0)),
+                    }
+                    for a in self.agents
+                }
+                attacks_by_agent = {
+                    a.agent_id: int(getattr(a, "episode_attack_count", 0))
+                    for a in self.agents
+                }
+                messages_sent_by_agent = {
+                    a.agent_id: int(getattr(a, "episode_messages_sent", 0))
+                    for a in self.agents
+                }
+                episode_context = (
+                    f"Rules: {json.dumps(reward_rules)}\n"
+                    f"Episode: {ep}\n"
+                    f"TotalSteps: {stats.get('total_steps')}\n"
+                    f"TotalReward: {stats.get('total_reward')}\n"
+                    f"RewardsByAgent: {json.dumps(stats.get('episode_rewards', {}))}\n"
+                    f"InventoryByAgent: {json.dumps(inventory_by_agent)}\n"
+                    f"AttacksByAgent: {json.dumps(attacks_by_agent)}\n"
+                    f"MessagesSentByAgent: {json.dumps(messages_sent_by_agent)}\n"
+                    f"TotalAttacks: {sum(attacks_by_agent.values())}\n"
+                    f"TotalMessagesSent: {sum(messages_sent_by_agent.values())}\n"
+                )
+                metrics_collector.set_episode_context(episode_context)
+            if metrics_collector is not None:
+                metrics_collector.end_episode()
 
             if verbose:
                 print(f"\nEpisode {ep + 1} Results:")
@@ -445,6 +501,11 @@ class StagHuntRunner:
 
 # ------------- Example usage -------------
 if __name__ == "__main__":
+    # Load project-local env files so API keys are available without manual export.
+    project_root = Path(__file__).resolve().parents[3]
+    load_dotenv(dotenv_path=project_root / ".env", override=False)
+    load_dotenv(dotenv_path=project_root / ".env.local", override=False)
+
     # Create configuration
     map_path = Path(__file__).with_name("map.txt")
     config = create_map_based_staghunt_config(map_file=str(map_path))
@@ -473,7 +534,7 @@ if __name__ == "__main__":
         model_name="openai:gpt-4o",   # Required to trigger API path
         api_provider="openai",        # Required
         api_model="gpt-4o",           # Actual OpenAI model string
-        api_key="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",
+        api_key=os.getenv("OPENAI_API_KEY"),
         temperature=0.1,
         max_tokens=512,
     )
@@ -482,6 +543,18 @@ if __name__ == "__main__":
     # Create environment and ensure it uses the same bus
     env = StagHuntEnv(config.to_dict(), agents)
     env.message_bus = bus
+    # Attach evaluation metrics collector (communication/reasoning prompts are placeholders for now)
+    prompts_dir = Path(__file__).resolve().parents[2] / "llm_configs" / "prompts"
+    with open(prompts_dir / "communication_prompt.md", "r", encoding="utf-8") as f:
+        communication_prompt = f.read()
+    with open(prompts_dir / "reasoning_prompt.md", "r", encoding="utf-8") as f:
+        reasoning_prompt = f.read()
+    env.metrics_collector = StagHuntMetricsCollector(
+        communication_prompt=communication_prompt,
+        reasoning_prompt=reasoning_prompt,
+        analysis_model="gpt-4.1",
+        api_key=os.getenv("EVAL_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"),
+    )
 
     # --- W&B run context ---
     run_ctx = dict(
@@ -512,6 +585,13 @@ if __name__ == "__main__":
     runner = StagHuntRunner(env, agents, run_ctx=run_ctx, tb=tb)
     stats = runner.run_multiple_episodes(num_episodes=num_episodes, max_steps=50, verbose=True)
 
+    # Evaluation metrics + plots
+    eval_out_dir = os.getenv(
+        "EVAL_OUTDIR",
+        f"sorrel/evaluation/outputs/staghunt/{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+    )
+    eval_report = evaluate_staghunt(stats, getattr(env, "metrics_collector", None), out_dir=eval_out_dir)
+
     # Summary
     print("\n" + "="*60)
     print("FINAL SUMMARY")
@@ -520,6 +600,13 @@ if __name__ == "__main__":
     avg_steps = np.mean([s["total_steps"] for s in stats])
     print(f"Average Total Reward: {avg_reward:.2f}")
     print(f"Average Steps per Episode: {avg_steps:.1f}")
+    print(f"TotalReward_m (avg per agent/episode): {eval_report.summary.get('total_reward_metric'):.4f}")
+    print(f"Avg First Successful Cooperation Turn: {eval_report.summary.get('avg_first_successful_cooperation_turn')}")
+    if eval_report.plots:
+        print("Evaluation plots:")
+        for name, path in eval_report.plots.items():
+            print(f"  {name}: {path}")
+    print(f"Evaluation report JSON: {os.path.join(eval_out_dir, 'report.json')}")
 
     # Optional: per-agent summaries if your agent exposes it
     for agent in agents:
