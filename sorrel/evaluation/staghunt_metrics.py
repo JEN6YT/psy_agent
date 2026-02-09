@@ -201,32 +201,45 @@ def _default_eval_out_dir(base: Optional[str] = None) -> str:
     return os.path.join(base, ts)
 
 
-def _plot_stags_hunted(per_episode_counts: List[Dict[int, int]], out_path: str) -> None:
-    if not per_episode_counts:
+def _plot_agent_series(
+    per_episode_values: List[Dict[int, float]],
+    out_path: str,
+    title: str,
+    y_label: str,
+) -> None:
+    if not per_episode_values:
         return
 
-    episode_count = len(per_episode_counts)
-    agent_ids = sorted({aid for ep in per_episode_counts for aid in ep.keys()})
+    episode_count = len(per_episode_values)
+    agent_ids = sorted({aid for ep in per_episode_values for aid in ep.keys()})
 
-    x = np.arange(episode_count)
-    width = 0.8 / max(1, len(agent_ids))
+    x = np.arange(1, episode_count + 1)
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    for idx, aid in enumerate(agent_ids):
-        y = [per_episode_counts[ep].get(aid, 0) for ep in range(episode_count)]
-        ax.bar(x + idx * width, y, width=width, label=f"agent_{aid}")
+    for aid in agent_ids:
+        y = [per_episode_values[ep].get(aid, 0.0) for ep in range(episode_count)]
+        ax.plot(x, y, marker="o", linewidth=2, label=f"agent_{aid}")
 
-    ax.set_title("Stags Hunted per Agent per Episode")
+    ax.set_title(title)
     ax.set_xlabel("Episode")
-    ax.set_ylabel("Stags Hunted")
-    ax.set_xticks(x + width * max(0, len(agent_ids) - 1) / 2)
-    ax.set_xticklabels([str(i + 1) for i in range(episode_count)])
+    ax.set_ylabel(y_label)
+    ax.set_xticks(x)
     ax.legend()
+    ax.grid(True, axis="y", alpha=0.3)
     fig.tight_layout()
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path)
     plt.close(fig)
+
+
+def _plot_stags_hunted(per_episode_counts: List[Dict[int, int]], out_path: str) -> None:
+    _plot_agent_series(
+        per_episode_values=[{aid: float(v) for aid, v in ep.items()} for ep in per_episode_counts],
+        out_path=out_path,
+        title="Stags Hunted per Agent per Episode",
+        y_label="Stags Hunted",
+    )
 
 
 def evaluate_staghunt(
@@ -262,6 +275,8 @@ def evaluate_staghunt(
     per_episode: List[Dict[str, Any]] = []
     coop_turns: List[int] = []
     stags_hunted_per_episode: List[Dict[int, int]] = []
+    rewards_per_episode: List[Dict[int, float]] = []
+    comm_count_per_episode: List[Dict[int, int]] = []
     comm_avg_by_agent_all: Dict[int, List[float]] = {aid: [] for aid in agent_ids}
     reasoning_avg_by_agent_all: Dict[int, List[float]] = {aid: [] for aid in agent_ids}
 
@@ -318,6 +333,8 @@ def evaluate_staghunt(
             "reasoning_turn_count_by_agent": reasoning_count,
         })
         stags_hunted_per_episode.append(stags)
+        rewards_per_episode.append(total_reward_by_agent)
+        comm_count_per_episode.append(comm_count)
 
     avg_first_coop = float(np.mean(coop_turns)) if coop_turns else None
 
@@ -327,6 +344,26 @@ def evaluate_staghunt(
     _plot_stags_hunted(stags_hunted_per_episode, stags_plot)
     if os.path.exists(stags_plot):
         plots["stags_hunted_per_episode"] = stags_plot
+
+    rewards_plot = os.path.join(out_dir, "plots", "total_reward_per_episode.png")
+    _plot_agent_series(
+        per_episode_values=rewards_per_episode,
+        out_path=rewards_plot,
+        title="Total Reward per Agent per Episode",
+        y_label="Total Reward",
+    )
+    if os.path.exists(rewards_plot):
+        plots["total_reward_per_episode"] = rewards_plot
+
+    comm_count_plot = os.path.join(out_dir, "plots", "communication_message_count_per_episode.png")
+    _plot_agent_series(
+        per_episode_values=[{aid: float(v) for aid, v in ep.items()} for ep in comm_count_per_episode],
+        out_path=comm_count_plot,
+        title="Communication Message Count per Agent per Episode",
+        y_label="Message Count",
+    )
+    if os.path.exists(comm_count_plot):
+        plots["communication_message_count_per_episode"] = comm_count_plot
 
     report = EvaluationReport(
         summary={
