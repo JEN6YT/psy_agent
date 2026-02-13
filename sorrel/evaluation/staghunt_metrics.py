@@ -4,12 +4,13 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Any, Tuple
 import json
 import os
+import time
 from pathlib import Path
 from datetime import datetime
 
 import numpy as np
 from matplotlib import pyplot as plt
-from openai import OpenAI
+from openai import OpenAI, APIConnectionError, APITimeoutError
 
 
 @dataclass
@@ -49,15 +50,29 @@ class OpenAIJsonScorer:
         self.model = model
 
     def score_json(self, prompt: str) -> Dict[str, Any]:
-        resp = self.client.responses.create(
-            model=self.model,
-            input=prompt,
-            temperature=0,
-            max_output_tokens=256,
-        )
-        text = resp.output_text.strip()
-        payload = _extract_json_object(text)
-        return payload
+        max_attempts = 3
+        last_err: Optional[Exception] = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                resp = self.client.responses.create(
+                    model=self.model,
+                    input=prompt,
+                    temperature=0,
+                    max_output_tokens=256,
+                )
+                text = resp.output_text.strip()
+                payload = _extract_json_object(text)
+                return payload
+            except (APIConnectionError, APITimeoutError) as e:
+                last_err = e
+                if attempt < max_attempts:
+                    # Backoff for transient network issues.
+                    time.sleep(0.5 * (2 ** (attempt - 1)))
+                else:
+                    raise RuntimeError(
+                        f"OpenAI scoring request failed after {max_attempts} attempts: {e}"
+                    ) from e
+        raise RuntimeError(f"OpenAI scoring request failed: {last_err}")
 
 
 class StagHuntMetricsCollector:
@@ -158,8 +173,12 @@ class StagHuntMetricsCollector:
                     continue
                 joined = json.dumps(msgs)
                 prompt = self.communication_prompt.format(message=joined, context=context)
-                result = self.scorer.score_json(prompt)
-                self._current.communication_score_by_agent[aid] = float(result.get("communication_score", 0))
+                try:
+                    result = self.scorer.score_json(prompt)
+                    self._current.communication_score_by_agent[aid] = float(result.get("communication_score", 0))
+                except RuntimeError as e:
+                    print(f"[staghunt-metrics] communication scoring skipped for agent {aid}: {e}")
+                    self._current.communication_score_by_agent[aid] = None
 
         # Reasoning: per-agent, per-episode
         if self.reasoning_prompt:
@@ -169,8 +188,12 @@ class StagHuntMetricsCollector:
                     continue
                 joined = json.dumps(texts)
                 prompt = self.reasoning_prompt.format(reasoning=joined, context=context)
-                result = self.scorer.score_json(prompt)
-                self._current.reasoning_score_by_agent[aid] = float(result.get("reasoning_score", 0))
+                try:
+                    result = self.scorer.score_json(prompt)
+                    self._current.reasoning_score_by_agent[aid] = float(result.get("reasoning_score", 0))
+                except RuntimeError as e:
+                    print(f"[staghunt-metrics] reasoning scoring skipped for agent {aid}: {e}")
+                    self._current.reasoning_score_by_agent[aid] = None
 
     # Backward-compatible no-ops for existing hooks (kept intentionally)
     def collect_attack_metrics(self, agent, rtype: str, entity) -> None:

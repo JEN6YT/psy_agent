@@ -36,6 +36,7 @@ Constraints:
   - the chosen target (if any) and its remaining HP
   - whether there is any walls/unpassables that block you
   - why the chosen action is appropriate now
+  - take into consideration of messages received if any
 - ACTION: must be a valid action ID from the action table
 - MESSAGE: empty string if no ally
 - CONFIDENCE: integer from 0 to 100

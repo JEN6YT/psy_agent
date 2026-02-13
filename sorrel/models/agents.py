@@ -3,6 +3,9 @@
 from __future__ import annotations
 from typing import Any, Sequence, Optional, List, Dict, Mapping
 import re, json
+import os
+import urllib.request
+import urllib.error
 import numpy as np
 
 # Keep your original import paths if these live elsewhere
@@ -425,11 +428,89 @@ class APILLMPlayer(LLMPlayer):
         return self.generate(prompt, temperature=temperature, max_tokens=max_tokens)
 
 
+class OllamaLLMPlayer(LLMPlayer):
+    """Ollama-backed LLM player (local API)."""
+
+    def __init__(
+        self,
+        *args,
+        ollama_model: Optional[str] = None,
+        ollama_host: Optional[str] = None,
+        ollama_options: Optional[Dict[str, Any]] = None,
+        ollama_keep_alive: Optional[str] = None,
+        ollama_timeout_s: int = 120,
+        **kwargs,
+    ):
+        self._ollama_model = ollama_model
+        self._ollama_host = (ollama_host or os.getenv("OLLAMA_HOST") or "http://127.0.0.1:11434").rstrip("/")
+        self._ollama_options = dict(ollama_options or {})
+        self._ollama_keep_alive = ollama_keep_alive
+        self._ollama_timeout_s = int(ollama_timeout_s)
+        super().__init__(*args, **kwargs)
+
+    def _init_transformers(self) -> None:
+        # Keep the same field names expected by parent classes.
+        self.device = "ollama"
+        self.tokenizer = None
+        self.model = None
+        if not self._ollama_model:
+            name = self._hf_model_name.strip()
+            self._ollama_model = name[len("ollama:"):] if name.lower().startswith("ollama:") else name
+
+    def generate(self, prompt: str, *, temperature=None, max_tokens=None) -> str:
+        temp = float(self.temperature if temperature is None else temperature)
+        max_new = int(self.max_tokens if max_tokens is None else max_tokens)
+
+        payload: Dict[str, Any] = {
+            "model": self._ollama_model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                **self._ollama_options,
+                "temperature": temp,
+                "num_predict": max_new,
+            },
+        }
+        if self._ollama_keep_alive is not None:
+            payload["keep_alive"] = self._ollama_keep_alive
+
+        req = urllib.request.Request(
+            f"{self._ollama_host}/api/generate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self._ollama_timeout_s) as resp:
+                body = resp.read().decode("utf-8")
+            obj = json.loads(body)
+        except urllib.error.HTTPError as e:
+            err = e.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"Ollama HTTP error {e.code}: {err}") from e
+        except Exception as e:
+            raise RuntimeError(f"Ollama request failed: {e}") from e
+
+        text = obj.get("response", "")
+        if not isinstance(text, str):
+            text = str(text)
+        return text.strip()
+
+    @property
+    def model_name_str(self) -> str:
+        return f"LLMPlayer-ollama-{self._ollama_model}"
+
+
 
 def resolve_model_class(model_name: str, **model_kwargs):
     api_provider = model_kwargs.get("api_provider")
     if api_provider in ("openai", "gemini"):
         return APILLMPlayer
+    if api_provider == "ollama":
+        return OllamaLLMPlayer
     if isinstance(model_name, str) and model_name.startswith(("openai:", "gemini:")):
         return APILLMPlayer
+    if isinstance(model_name, str):
+        lower = model_name.lower()
+        if lower.startswith("ollama:") or ("llama" in lower) or ("gemma" in lower):
+            return OllamaLLMPlayer
     return LLMPlayer

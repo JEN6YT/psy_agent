@@ -951,6 +951,9 @@ class StagHuntEnv:
                 "hare_health": hare_health,
                 "stag_health": stag_health,
                 "attack_cost": attack_cost,
+                "regeneration_rate": regeneration_rate,
+                "stag_regeneration_cooldown": stag_regeneration_cooldown,
+                "hare_regeneration_cooldown": hare_regeneration_cooldown,
             },
             "rules": [
                 "When you choose to attack, the beam only fires forward and only hits within beam length.",

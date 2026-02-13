@@ -526,6 +526,8 @@ if __name__ == "__main__":
     # )
     # Alternatively, model_name
     # "mistralai/Mistral-7B-Instruct-v0.3"
+    # "meta-llama/Meta-Llama-3.1-8B-Instruct"
+    # "google/gemma-2-9b-it"
     # ""
 
     # gpt model
@@ -537,6 +539,16 @@ if __name__ == "__main__":
         api_key=os.getenv("OPENAI_API_KEY"),
         temperature=0.1,
         max_tokens=512,
+    )
+
+    # ollama model
+    agents, bus, rep = create_agent_team(
+        num_agents=2,
+        model_name="ollama:llama3.1:8b",
+        api_provider="ollama",
+        ollama_host=os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434"),
+        temperature=0.1,
+        max_tokens=512
     )
 
 
