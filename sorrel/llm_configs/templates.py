@@ -98,8 +98,27 @@ def system_staghunt(
     reward_rule: dict | str | None = None,
     vision_radius: int | None = None,
     beam_length: int | None = None,
+    framing_mode: str = "natural",
+    neutral_hare_label: str = "ijjhu",
+    neutral_stag_label: str = "guydguug",
 ) -> str:
     tpl = PromptRegistry.get(PromptRegistry.STAG)
+    mode = str(framing_mode).strip().lower()
+    hare_label = neutral_hare_label if mode == "neutral" else "hare"
+    stag_label = neutral_stag_label if mode == "neutral" else "stag"
+
+    def _replace_terms(text: str) -> str:
+        if mode != "neutral":
+            return text
+        return (
+            text.replace("Hares", f"{hare_label.capitalize()}s")
+            .replace("Stags", f"{stag_label.capitalize()}s")
+            .replace("HARE", hare_label.upper())
+            .replace("STAG", stag_label.upper())
+            .replace("hare", hare_label)
+            .replace("stag", stag_label)
+        )
+
     # stringify reward rule in a compact, action-oriented format
     def _format_reward_rule(rule: dict | list | str | None) -> str:
         if isinstance(rule, dict):
@@ -108,18 +127,18 @@ def system_staghunt(
             hare = params.get("hare_reward", None)
             stag = params.get("stag_reward", None)
             if hare is not None or stag is not None:
-                lines.append(f"Rewards: hare={hare}, stag={stag}.")
+                lines.append(f"Rewards: {hare_label}={hare}, {stag_label}={stag}.")
             for key in ("rules", "policy", "tips"):
                 items = rule.get(key, None)
                 if isinstance(items, (list, tuple)) and items:
                     lines.append(f"{key.capitalize()}:")
-                    lines.extend(f"- {item}" for item in items)
+                    lines.extend(f"- {_replace_terms(str(item))}" for item in items)
             if lines:
                 return "\n".join(lines)
-            return json.dumps(rule, ensure_ascii=False)
+            return _replace_terms(json.dumps(rule, ensure_ascii=False))
         if isinstance(rule, (list, tuple)):
-            return "\n".join(f"- {item}" for item in rule)
-        return str(rule) if rule else "Not specified."
+            return "\n".join(f"- {_replace_terms(str(item))}" for item in rule)
+        return _replace_terms(str(rule)) if rule else "Not specified."
 
     reward_rule_str = _format_reward_rule(reward_rule)
 

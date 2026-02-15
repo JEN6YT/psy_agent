@@ -16,6 +16,7 @@ from sorrel.llm_configs.communication.reputation import Reputation
 from sorrel.examples.staghunt.world import StagHuntWorld
 from sorrel.examples.staghunt.env import ORIENTATION_VECTORS
 from sorrel.examples.staghunt.entities import AttackBeam
+from sorrel.examples.staghunt.framing import resolve_staghunt_framing
 
 import json
 import os
@@ -167,6 +168,7 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         
         self.max_turns = config.world.max_turns
         self.config = config
+        self.framing = resolve_staghunt_framing(config)
         
         # Use provided message bus or create new one
         self.message_bus = message_bus
@@ -278,8 +280,14 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
             f"Your health: {self.health}/{self.max_health}",
             f"Attack cooldown: {self.attack_cooldown_timer}",
         ]
+        hare_label = self.framing.hare
+        stag_label = self.framing.stag
+        hare_plural = self.framing.hare_plural
+        stag_plural = self.framing.stag_plural
         inv = getattr(self, "inventory", {"hare": 0, "stag": 0})
-        lines.append(f"Inventory: hare={inv.get('hare', 0)}, stag={inv.get('stag', 0)}")
+        lines.append(
+            f"Inventory: {hare_label}={inv.get('hare', 0)}, {stag_label}={inv.get('stag', 0)}"
+        )
 
         vision_radius = int(getattr(world, "vision_radius", self.observation_spec.vision_radius))
         h, w = world.world.height, world.world.width
@@ -385,7 +393,7 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
                 ent = world.world.observe((ny, nx, world.world.dynamic_layer))
                 if isinstance(ent, HareResource):
                     hare_positions.append((ny, nx))
-                    tgt = {"type": "hare", "pos_rc": (ny, nx)}
+                    tgt = {"type": hare_label, "pos_rc": (ny, nx)}
                     if hasattr(ent, "health"):
                         tgt["hp"] = int(ent.health)
                     visible_targets.append(tgt)
@@ -393,7 +401,7 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
                     stag_positions.append((ny, nx))
                     if abs(dy) + abs(dx) == 1:
                         stag_adjacent = True
-                    tgt = {"type": "stag", "pos_rc": (ny, nx)}
+                    tgt = {"type": stag_label, "pos_rc": (ny, nx)}
                     if hasattr(ent, "health"):
                         tgt["hp"] = int(ent.health)
                     visible_targets.append(tgt)
@@ -423,53 +431,55 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         if hare_positions:
             hare_positions.sort()
             lines.append(
-                "Hares within vision: "
+                f"{hare_plural.capitalize()} within vision: "
                 + ", ".join(
                     f"({hy}, {hx}) [{_format_offset(hy, hx)}]"
                     for hy, hx in hare_positions
                 )
             )
         else:
-            lines.append("Hares within vision: none")
+            lines.append(f"{hare_plural.capitalize()} within vision: none")
         if beam_hare_positions:
             lines.append(
-                "Hares in beam: "
+                f"{hare_plural.capitalize()} in beam: "
                 + ", ".join(
                     f"({hy}, {hx}) [{_format_offset(hy, hx)}]"
                     for hy, hx in sorted(beam_hare_positions)
                 )
             )
         else:
-            lines.append("Hares in beam: none")
+            lines.append(f"{hare_plural.capitalize()} in beam: none")
 
         if stag_positions:
             stag_positions.sort()
             lines.append(
-                "Stags within vision: "
+                f"{stag_plural.capitalize()} within vision: "
                 + ", ".join(
                     f"({sy}, {sx}) [{_format_offset(sy, sx)}]"
                     for sy, sx in stag_positions
                 )
             )
         else:
-            lines.append("Stags within vision: none")
+            lines.append(f"{stag_plural.capitalize()} within vision: none")
         if beam_stag_positions:
             lines.append(
-                "Stags in beam: "
+                f"{stag_plural.capitalize()} in beam: "
                 + ", ".join(
                     f"({sy}, {sx}) [{_format_offset(sy, sx)}]"
                     for sy, sx in sorted(beam_stag_positions)
                 )
             )
         else:
-            lines.append("Stags in beam: none")
+            lines.append(f"{stag_plural.capitalize()} in beam: none")
         
         # Add action reminder
         lines.append("\nActions: 0=stay, 1=up, 2=right, 3=down, 4=left, 5=attack")
         
         # Add strategic context based on what we see
         if stag_adjacent and ally_adjacent:
-            lines.append("TIP: You may cooperate on STAG and share a message by adding 'MESSAGE: <your message>' to your response.")
+            lines.append(
+                f"TIP: You may cooperate on {stag_label.upper()} and share a message by adding 'MESSAGE: <your message>' to your response."
+            )
             # else:
             #     lines.append("TIP: STAG needs 2+ agents. Wait for ally to come closer.")
         # elif nearby["stag_adjacent"] and not nearby_agents:
@@ -892,6 +902,7 @@ def create_staghunt_agent(
         config = create_default_staghunt_config()
 
     reward_rule = StagHuntEnv.reward_rules_from_config(config)
+    framing = resolve_staghunt_framing(config)
     
     # Create the LLM model with correct agent_id
     ModelCls = resolve_model_class(model_name, **model_kwargs)
@@ -906,6 +917,9 @@ def create_staghunt_agent(
         reward_rule=reward_rule,
         vision_radius=getattr(config.observation, "vision_radius", None),
         beam_length=getattr(config.world, "beam_length", None),
+        framing_mode=framing.mode,
+        neutral_hare_label=framing.hare,
+        neutral_stag_label=framing.stag,
         **model_kwargs
     )
     

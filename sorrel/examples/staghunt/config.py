@@ -148,6 +148,9 @@ class WorldConfig(ConfigMixin):
 
     # Game-specific parameters (for backwards compatibility)
     game_type: str = "staghunt"
+    framing_mode: str = "natural"  # "natural" | "neutral"
+    neutral_hare_label: str = "ijjhu"
+    neutral_stag_label: str = "guydguug"
     stag_reward: float = 5.0
     hare_reward: float = 1.0
     sucker_payoff: float = 0.0

@@ -140,6 +140,9 @@ class LLMPlayer(BaseModel):
         reward_rule: dict | str | None = None,
         vision_radius: int | None = None,
         beam_length: int | None = None,
+        framing_mode: str = "natural",
+        neutral_hare_label: str = "ijjhu",
+        neutral_stag_label: str = "guydguug",
         **hf_kwargs
     ):
         super().__init__(
@@ -178,6 +181,9 @@ class LLMPlayer(BaseModel):
                 reward_rule,
                 vision_radius=vision_radius,
                 beam_length=beam_length,
+                framing_mode=framing_mode,
+                neutral_hare_label=neutral_hare_label,
+                neutral_stag_label=neutral_stag_label,
             ) if game_type == "staghunt" else
              system_treasurehunt(self.role, self.action_table) if game_type == "treasurehunt" else
              self._default_system_prompt())

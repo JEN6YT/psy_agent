@@ -32,6 +32,7 @@ from typing import Tuple
 from sorrel.agents.agent import InteractionEvidence
 from sorrel.evaluation.staghunt_metrics import StagHuntMetricsCollector, evaluate_staghunt
 from sorrel.models.agents import parse_llm_fields
+from sorrel.examples.staghunt.framing import resolve_staghunt_framing, commitment_terms
 
 ORIENT_TO_FACING = {
     0: "back",   # north
@@ -53,6 +54,8 @@ class StagHuntRunner:
         self.env = env
         self.agents = sorted(agents, key=lambda a: a.agent_id)
         self.agent_dict = {a.agent_id: a for a in self.agents}
+        self.framing = resolve_staghunt_framing(getattr(self.env, "config", {}))
+        self._commitment_terms = commitment_terms(self.framing)
 
         # Shared bus
         self.bus: MessageBus = getattr(self.env, "message_bus", None) or MessageBus(max_per_agent=10)
@@ -144,9 +147,10 @@ class StagHuntRunner:
         if not text:
             return None
         t = text.lower()
-        if "stag" in t and ("attack" in t or "hunt" in t):
+        has_attack_intent = ("attack" in t) or ("hunt" in t)
+        if any(term in t for term in self._commitment_terms["stag"]) and has_attack_intent:
             return "attack_stag"
-        if "hare" in t and ("attack" in t or "hunt" in t):
+        if any(term in t for term in self._commitment_terms["hare"]) and has_attack_intent:
             return "attack_hare"
         return None
 
@@ -511,7 +515,10 @@ if __name__ == "__main__":
     config = create_map_based_staghunt_config(map_file=str(map_path))
     # INTERACT is for chat; rewards should not require INTERACT
     if hasattr(config, "world"):
-        # config.world.max_turns = 50
+        config.world.max_turns = 50
+        # config.world.framing_mode = "neutral"
+        # config.world.neutral_hare_label = "ijjhu"
+        # config.world.neutral_stag_label = "guydguug"
         if hasattr(config.world, "require_interact"):
             config.world.require_interact = False  # hare=+1 on standing; stag=+5 each if quorum
         if hasattr(config, "num_agents"):

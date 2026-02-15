@@ -26,6 +26,7 @@ from sorrel.examples.staghunt.entities import (
     Wall, Sand, Empty, Spawn, StagResource, HareResource,
 )
 from sorrel.examples.staghunt.map_generator import MapBasedWorldGenerator
+from sorrel.examples.staghunt.framing import resolve_staghunt_framing, replace_resource_terms
 
 # Communication + reputation
 from sorrel.llm_configs.communication.message_bus import MessageBus
@@ -950,20 +951,23 @@ class StagHuntEnv:
     # NEW: static helper usable without an instance
     @staticmethod
     def reward_rules_from_config(config: dict) -> dict:
-        w = config.get("world", {}) if isinstance(config, dict) else {}
-        hare_reward = float(w.get("hare_reward", 2.0))
-        stag_reward = float(w.get("stag_reward", 5.0))
+        world_cfg = config.get("world", {}) if isinstance(config, dict) else getattr(config, "world", {})
+        getw = world_cfg.get if isinstance(world_cfg, dict) else lambda k, d: getattr(world_cfg, k, d)
 
-        agent_health = float(w.get("agent_health", 12))
-        hare_health = float(w.get("hare_health", 1))
-        stag_health = float(w.get("stag_health", 6))
-        attack_cost = float(w.get("attack_cost", 0.05))
+        hare_reward = float(getw("hare_reward", 2.0))
+        stag_reward = float(getw("stag_reward", 5.0))
 
-        regeneration_rate = float(w.get("regeneration_rate", 0.05))
-        stag_regeneration_cooldown = int(w.get("stag_regeneration_cooldown", 5))
-        hare_regeneration_cooldown = int(w.get("hare_regeneration_cooldown", 3))
+        agent_health = float(getw("agent_health", 12))
+        hare_health = float(getw("hare_health", 1))
+        stag_health = float(getw("stag_health", 6))
+        attack_cost = float(getw("attack_cost", 0.05))
 
-        return {
+        regeneration_rate = float(getw("regeneration_rate", 0.05))
+        stag_regeneration_cooldown = int(getw("stag_regeneration_cooldown", 5))
+        hare_regeneration_cooldown = int(getw("hare_regeneration_cooldown", 3))
+        framing = resolve_staghunt_framing(config)
+
+        out = {
             "name": "staghunt_beam_kill_v2",
             "params": {
                 "hare_reward": hare_reward,
@@ -998,6 +1002,10 @@ class StagHuntEnv:
                 "Hare is safe individually; stag requires cooperation to avoid wasted attacks.",
             ],
         }
+        if framing.mode == "neutral":
+            out["rules"] = [replace_resource_terms(str(r), framing) for r in out.get("rules", [])]
+            out["tips"] = [replace_resource_terms(str(t), framing) for t in out.get("tips", [])]
+        return out
 
 
     
