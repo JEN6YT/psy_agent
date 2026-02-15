@@ -287,6 +287,7 @@ class Renderer:
 
         # index agent positions for bubbles/panel
         agents = frame.get("agents", []) or []
+        use_agent0_for_all = len(agents) >= 3
         agent_pos: Dict[int, Tuple[int, int]] = {}
         for a in agents:
             aid = _safe_int(a.get("id", 0))
@@ -297,7 +298,8 @@ class Renderer:
             aid = _safe_int(a.get("id", 0))
             y, x = _safe_int(a.get("y", 0)), _safe_int(a.get("x", 0))
             facing = str(a.get("facing", "front"))
-            spr = self.agent_sprite(aid, facing)
+            sprite_aid = 0 if use_agent0_for_all else aid
+            spr = self.agent_sprite(sprite_aid, facing)
             if spr is None:
                 raise FileNotFoundError(
                     f"Missing agent sprite for agent {aid} facing {facing}. "
@@ -337,14 +339,24 @@ class Renderer:
             t = frame.get("t", 0)
             rewards = frame.get("rewards", {}) or {}
             actions = frame.get("actions", {}) or {}
+            agents_for_hud = frame.get("agents", []) or []
+            agent_ids = sorted({_safe_int(a.get("id", 0)) for a in agents_for_hud})
+            if not agent_ids:
+                parsed_ids: List[int] = []
+                for k in actions.keys():
+                    try:
+                        parsed_ids.append(int(k))
+                    except Exception:
+                        pass
+                agent_ids = sorted(set(parsed_ids))
 
-            # try to show both agents if present
-            a0 = _safe_int(actions.get("0", 0))
-            a1 = _safe_int(actions.get("1", 0))
-            r0 = _safe_float(rewards.get("0", 0.0))
-            r1 = _safe_float(rewards.get("1", 0.0))
-
-            hud = f"t={t} | A0: {ACTION_NAMES[a0]} r={r0:+.2f} | A1: {ACTION_NAMES[a1]} r={r1:+.2f}"
+            parts = [f"t={t}"]
+            for aid in agent_ids:
+                act = _safe_int(actions.get(str(aid), actions.get(aid, 0)))
+                act_name = ACTION_NAMES[act] if 0 <= act < len(ACTION_NAMES) else "?"
+                rew = _safe_float(rewards.get(str(aid), rewards.get(aid, 0.0)))
+                parts.append(f"A{aid}:{act_name} r={rew:+.2f}")
+            hud = " | ".join(parts)
             draw.rectangle([0, 0, grid_w, 18], fill=(0, 0, 0, 140))
             draw.text((6, 2), hud, fill=(255, 255, 255, 255), font=self.font)
 

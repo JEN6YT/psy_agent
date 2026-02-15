@@ -277,14 +277,27 @@ class StagHuntEnv:
 
         # Turn advance & episode end
         self.turn += 1
-        done = self.turn >= self.max_turns
+        resource_depleted = not self._has_alive_resources()
+        done = (self.turn >= self.max_turns) or resource_depleted
 
         # Deliver messages for NEXT obs
         self.deliver_messages()
 
         # Observations
         obs = self._get_observations()
-        info = {"turn": self.turn, "total_reward": self.total_reward}
+        if self.turn >= self.max_turns:
+            termination_reason = "max_turns"
+        elif resource_depleted:
+            termination_reason = "all_resources_killed"
+        else:
+            termination_reason = None
+
+        info = {
+            "turn": self.turn,
+            "total_reward": self.total_reward,
+            "resource_depleted": resource_depleted,
+            "termination_reason": termination_reason,
+        }
         return obs, step_rewards, done, info
 
 
@@ -872,6 +885,14 @@ class StagHuntEnv:
             return False
         terrain = self.world.observe((y, x, self.world.terrain_layer))
         return bool(getattr(terrain, "passable", False))
+
+    def _has_alive_resources(self) -> bool:
+        for y in range(self.world.height):
+            for x in range(self.world.width):
+                ent = self.world.observe((y, x, self.world.dynamic_layer))
+                if isinstance(ent, (HareResource, StagResource)):
+                    return True
+        return False
 
     # For visualization / debugging
     def hare_positions(self) -> List[Tuple[int, int]]:

@@ -233,7 +233,10 @@ class StagHuntRunner:
             if hasattr(self.bus, "last_queued"):
                 for m in self.bus.last_queued:
                     if isinstance(m, dict):
-                        sid = m.get("sender_id") or m.get("sender")
+                        if "sender_id" in m:
+                            sid = m.get("sender_id")
+                        else:
+                            sid = m.get("sender")
                         msg = m.get("message")
                         text = msg.get("text", "") if isinstance(msg, dict) else m.get("text", "")
                     elif isinstance(m, tuple) and len(m) >= 2:
@@ -511,7 +514,7 @@ if __name__ == "__main__":
     config = create_map_based_staghunt_config(map_file=str(map_path))
     # INTERACT is for chat; rewards should not require INTERACT
     if hasattr(config, "world"):
-        config.world.max_turns = 50
+        config.world.max_turns = 150
         if hasattr(config.world, "require_interact"):
             config.world.require_interact = False  # hare=+1 on standing; stag=+5 each if quorum
         config.world.num_agents = 4
@@ -594,7 +597,7 @@ if __name__ == "__main__":
 
     # Create runner and go
     runner = StagHuntRunner(env, agents, run_ctx=run_ctx, tb=tb)
-    stats = runner.run_multiple_episodes(num_episodes=num_episodes, max_steps=100, verbose=True)
+    stats = runner.run_multiple_episodes(num_episodes=num_episodes, max_steps=150, verbose=True)
 
     # Evaluation metrics + plots
     eval_out_dir = os.getenv(

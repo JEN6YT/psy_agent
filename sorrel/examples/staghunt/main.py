@@ -511,7 +511,7 @@ if __name__ == "__main__":
     config = create_map_based_staghunt_config(map_file=str(map_path))
     # INTERACT is for chat; rewards should not require INTERACT
     if hasattr(config, "world"):
-        config.world.max_turns = 50
+        # config.world.max_turns = 50
         if hasattr(config.world, "require_interact"):
             config.world.require_interact = False  # hare=+1 on standing; stag=+5 each if quorum
         if hasattr(config, "num_agents"):
