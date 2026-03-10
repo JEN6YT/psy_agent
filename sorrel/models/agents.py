@@ -117,8 +117,45 @@ def parse_llm_fields(
     return out
 
 
+def _transformers_load_config(hf_kwargs: Optional[Dict[str, Any]] = None) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    hf_kwargs = hf_kwargs or {}
+    tok_kwargs = dict(hf_kwargs.get("tokenizer_kwargs") or {})
+    mdl_kwargs = dict(hf_kwargs.get("model_kwargs") or {})
+    return tok_kwargs, mdl_kwargs
+
+
+class SharedTransformersBackend:
+    """Reusable tokenizer/model bundle for multiple local HF agents."""
+
+    def __init__(
+        self,
+        *,
+        model_name: str,
+        hf_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        import torch
+        from transformers import AutoTokenizer, AutoModelForCausalLM
+
+        tok_kwargs, mdl_kwargs = _transformers_load_config(hf_kwargs)
+        self.model_name = model_name
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.torch = torch
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            **tok_kwargs,
+        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            torch_dtype=(torch.float16 if self.device == "cuda" else torch.float32),
+            **mdl_kwargs,
+        ).to(self.device)
+
+
 class LLMPlayer(BaseModel):
     """Transformers-backed LLM player with comms + reputation integration."""
+    uses_transformers_backend = True
 
     def __init__(
         self,
@@ -143,6 +180,7 @@ class LLMPlayer(BaseModel):
         framing_mode: str = "natural",
         neutral_hare_label: str = "ijjhu",
         neutral_stag_label: str = "guydguug",
+        shared_backend: Optional[SharedTransformersBackend] = None,
         **hf_kwargs
     ):
         super().__init__(
@@ -158,6 +196,7 @@ class LLMPlayer(BaseModel):
         )
         # ---- FIX: don't write to BaseModel.model_name (read-only); use our own field
         self._hf_model_name = model_name
+        self._shared_backend = shared_backend
 
         self.verbose = verbose
         self.game_type = game_type
@@ -195,24 +234,14 @@ class LLMPlayer(BaseModel):
 
     # ---------------- init ----------------
     def _init_transformers(self) -> None:
-        import torch
-        from transformers import AutoTokenizer, AutoModelForCausalLM
-
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        tok_kwargs = (self.hf_kwargs.get("tokenizer_kwargs") or {})
-        mdl_kwargs = (self.hf_kwargs.get("model_kwargs") or {})
-
-        # ---- FIX: use self._hf_model_name everywhere
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self._hf_model_name, trust_remote_code=True, **tok_kwargs
+        backend = self._shared_backend or SharedTransformersBackend(
+            model_name=self._hf_model_name,
+            hf_kwargs=self.hf_kwargs,
         )
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self._hf_model_name,
-            trust_remote_code=True,
-            torch_dtype=(torch.float16 if self.device == "cuda" else torch.float32),
-            **mdl_kwargs
-        ).to(self.device)
-        self.torch = torch  # convenience alias
+        self.device = backend.device
+        self.tokenizer = backend.tokenizer
+        self.model = backend.model
+        self.torch = backend.torch
 
     # ------------- prompt building -------------
     def _default_system_prompt(self) -> str:
@@ -392,6 +421,7 @@ class LLMPlayer(BaseModel):
 
 class APILLMPlayer(LLMPlayer):
     """GPT-4o-backed LLM player."""
+    uses_transformers_backend = False
 
     def __init__(
         self,
@@ -436,6 +466,7 @@ class APILLMPlayer(LLMPlayer):
 
 class OllamaLLMPlayer(LLMPlayer):
     """Ollama-backed LLM player (local API)."""
+    uses_transformers_backend = False
 
     def __init__(
         self,

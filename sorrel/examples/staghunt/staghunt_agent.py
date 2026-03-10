@@ -5,7 +5,12 @@ the Stag Hunt game, using the MessageBus for efficient message delivery.
 """
 
 from sorrel.action.action_spec import ActionSpec
-from sorrel.models.agents import LLMPlayer, resolve_model_class, parse_llm_fields
+from sorrel.models.agents import (
+    LLMPlayer,
+    SharedTransformersBackend,
+    resolve_model_class,
+    parse_llm_fields,
+)
 from sorrel.llm_configs.observation.serializer import create_llm_observation_parser
 from sorrel.examples.staghunt.config import ExperimentConfig, create_default_staghunt_config
 from sorrel.agents.agent import LLMAgent
@@ -957,17 +962,28 @@ def create_agent_team(
     # Initialize message bus with agent IDs
     agent_ids = list(range(num_agents))
     message_bus.reset(agent_ids)
+
+    ModelCls = resolve_model_class(model_name, **model_kwargs)
+    shared_backend = None
+    if getattr(ModelCls, "uses_transformers_backend", False):
+        shared_backend = SharedTransformersBackend(
+            model_name=model_name,
+            hf_kwargs=model_kwargs,
+        )
     
     # Create agents
     agents = []
     for i in range(num_agents):
+        agent_kwargs = dict(model_kwargs)
+        if shared_backend is not None:
+            agent_kwargs["shared_backend"] = shared_backend
         agent = create_staghunt_agent(
             agent_id=i,
             model_name=model_name,
             config=config,
             message_bus=message_bus,
             reputation=reputation,
-            **model_kwargs
+            **agent_kwargs
         )
         agents.append(agent)
     

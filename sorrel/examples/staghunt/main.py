@@ -549,14 +549,14 @@ if __name__ == "__main__":
     )
 
     # ollama model
-    agents, bus, rep = create_agent_team(
-        num_agents=2,
-        model_name="ollama:llama3.1:8b",
-        api_provider="ollama",
-        ollama_host=os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434"),
-        temperature=0.1,
-        max_tokens=512
-    )
+    # agents, bus, rep = create_agent_team(
+    #     num_agents=2,
+    #     model_name="ollama:llama3.1:8b",
+    #     api_provider="ollama",
+    #     ollama_host=os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434"),
+    #     temperature=0.1,
+    #     max_tokens=512
+    # )
 
 
     # Create environment and ensure it uses the same bus
@@ -602,7 +602,7 @@ if __name__ == "__main__":
 
     # Create runner and go
     runner = StagHuntRunner(env, agents, run_ctx=run_ctx, tb=tb)
-    stats = runner.run_multiple_episodes(num_episodes=num_episodes, max_steps=50, verbose=True)
+    stats = runner.run_multiple_episodes(num_episodes=num_episodes, max_steps=150, verbose=True)
 
     # Evaluation metrics + plots
     eval_out_dir = os.getenv(
