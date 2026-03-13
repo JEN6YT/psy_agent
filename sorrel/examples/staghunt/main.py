@@ -511,18 +511,18 @@ if __name__ == "__main__":
     load_dotenv(dotenv_path=project_root / ".env.local", override=False)
 
     # Create configuration
-    map_path = Path(__file__).with_name("map.txt")
+    map_path = Path(__file__).with_name("map_hard.txt")
     config = create_map_based_staghunt_config(map_file=str(map_path))
     # INTERACT is for chat; rewards should not require INTERACT
     if hasattr(config, "world"):
-        config.world.max_turns = 50
+        config.world.max_turns = 250
         # config.world.framing_mode = "neutral"
         # config.world.neutral_hare_label = "ijjhu"
         # config.world.neutral_stag_label = "guydguug"
         if hasattr(config.world, "require_interact"):
             config.world.require_interact = False  # hare=+1 on standing; stag=+5 each if quorum
-        if hasattr(config, "num_agents"):
-            config.world.num_agents = 6
+        if hasattr(config.world, "num_agents"):
+            config.world.num_agents = 4
 
     # Create team of N agents with shared MessageBus and Reputation
     # agents, bus, rep = create_agent_team(
@@ -539,7 +539,7 @@ if __name__ == "__main__":
 
     # gpt model
     agents, bus, rep = create_agent_team(
-        num_agents=2,
+        num_agents=4,
         model_name="openai:gpt-4o",   # Required to trigger API path
         api_provider="openai",        # Required
         api_model="gpt-4o",           # Actual OpenAI model string
@@ -602,7 +602,7 @@ if __name__ == "__main__":
 
     # Create runner and go
     runner = StagHuntRunner(env, agents, run_ctx=run_ctx, tb=tb)
-    stats = runner.run_multiple_episodes(num_episodes=num_episodes, max_steps=150, verbose=True)
+    stats = runner.run_multiple_episodes(num_episodes=num_episodes, max_steps=250, verbose=True)
 
     # Evaluation metrics + plots
     eval_out_dir = os.getenv(

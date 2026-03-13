@@ -996,15 +996,15 @@ class StagHuntEnv:
                 f"since last attck, starting after {hare_regeneration_cooldown} turns for hare and {stag_regeneration_cooldown} turns for stag, ",
                 f"with a regeneration rate of {regeneration_rate} per turn.",
             ],
-            "tips": [
-                "Stag is higher value than hare, and coordination increases expected reward.",
-                "Regeneration means partial progress can be lost, so consider focusing on finishing off targets.",
-                "Hare is safe individually; stag requires cooperation to avoid wasted attacks.",
-            ],
+            # "tips": [
+            #     "Stag is higher value than hare, and coordination increases expected reward.",
+            #     "Regeneration means partial progress can be lost, so consider focusing on finishing off targets.",
+            #     "Hare is safe individually; stag requires cooperation to avoid wasted attacks.",
+            # ],
         }
         if framing.mode == "neutral":
             out["rules"] = [replace_resource_terms(str(r), framing) for r in out.get("rules", [])]
-            out["tips"] = [replace_resource_terms(str(t), framing) for t in out.get("tips", [])]
+            # out["tips"] = [replace_resource_terms(str(t), framing) for t in out.get("tips", [])]
         return out
 
 
