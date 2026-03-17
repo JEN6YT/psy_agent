@@ -154,6 +154,25 @@ class StagHuntRunner:
             return "attack_hare"
         return None
 
+    def _latest_reflections(self) -> Dict[int, str]:
+        reflections: Dict[int, str] = {}
+        for agent in self.agents:
+            memory = getattr(getattr(agent, "model", None), "episodic_memory", None)
+            items = getattr(memory, "_reflections", None)
+            if items:
+                reflections[agent.agent_id] = str(items[-1]).strip()
+        return reflections
+
+    def _save_episode_reflections(self, out_dir: str, episode_idx: int | None) -> str | None:
+        reflections = self._latest_reflections()
+        if not reflections:
+            return None
+        filename = f"reflections_ep{episode_idx if episode_idx is not None else 0}_{int(time.time()*1000)}.json"
+        out_path = os.path.join(out_dir, filename)
+        with open(out_path, "w") as f:
+            json.dump(reflections, f, indent=2)
+        return out_path
+
     # ---------- main loops ----------
     def run_episode(self, max_steps: int = 100, verbose: bool = False, episode_idx: int | None = None) -> dict:
         # --- episode init ---
@@ -407,6 +426,9 @@ class StagHuntRunner:
         with open(out_path, "w") as f:
             json.dump(trace, f, indent=2)
         print(f"Saved episode trace to {out_path}")
+        reflections_path = self._save_episode_reflections(out_dir, episode_idx)
+        if reflections_path:
+            print(f"Saved agent reflections to {reflections_path}")
 
         # Episode-level logging
         wb_ep_log = {"episode": episode_idx if episode_idx is not None else 0}
@@ -445,11 +467,15 @@ class StagHuntRunner:
         except Exception:
             pass
 
+        latest_reflections = self._latest_reflections()
+
         return {
             "total_steps": step_count,
             "episode_rewards": episode_rewards,
             "total_reward": float(total_reward),
             "done": True,
+            "reflections": latest_reflections,
+            "reflections_path": reflections_path,
         }
 
 
@@ -502,6 +528,11 @@ class StagHuntRunner:
                 print(f"  Total Steps: {stats['total_steps']}")
                 print(f"  Total Reward: {stats['total_reward']:.2f}")
                 print(f"  Individual Rewards: {stats['episode_rewards']}")
+                reflections = stats.get("reflections", {})
+                if reflections:
+                    print("  Reflections:")
+                    for agent_id, reflection in reflections.items():
+                        print(f"    Agent {agent_id}: {reflection}")
 
         return all_stats
 
@@ -629,10 +660,12 @@ if __name__ == "__main__":
             print(f"  {name}: {path}")
     print(f"Evaluation report JSON: {os.path.join(eval_out_dir, 'report.json')}")
 
-    # Optional: per-agent summaries if your agent exposes it
+    print("\nAgent Reflections")
     for agent in agents:
-        if hasattr(agent, "get_strategy_summary"):
-            print(f"\n{agent.get_strategy_summary()}")
+        memory = getattr(getattr(agent, "model", None), "episodic_memory", None)
+        reflections = getattr(memory, "_reflections", None)
+        if reflections:
+            print(f"  Agent {agent.agent_id}: {str(reflections[-1]).strip()}")
 
     # Close TB and W&B
     try:

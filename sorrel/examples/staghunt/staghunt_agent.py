@@ -483,7 +483,7 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
         # Add strategic context based on what we see
         if stag_adjacent and ally_adjacent:
             lines.append(
-                f"TIP: You may cooperate on {stag_label.upper()} and share a message by adding 'MESSAGE: <your message>' to your response."
+                f"TIP: {stag_label.upper()} needs multiple contributors. Coordinate with the nearby ally and share a message by adding 'MESSAGE: <your message>' to your response."
             )
             # else:
             #     lines.append("TIP: STAG needs 2+ agents. Wait for ally to come closer.")
@@ -779,8 +779,9 @@ class StagHuntLLMAgent(LLMAgent[StagHuntEnv]):
             notes=notes,
         )
 
-        if done and hasattr(self, "generate_reflection"):
-            self.generate_reflection(world=None)
+        # Reflection generation disabled.
+        # if done and hasattr(self, "generate_reflection"):
+        #     self.generate_reflection(world=None)
 
 
     def update_reputation_after_interaction(

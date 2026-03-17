@@ -485,9 +485,9 @@ adjust your strategy in future episodes.
         # Increment turn counter
         self.turn_count += 1
         
-        # Generate reflection if episode ended
-        if done:
-            self.generate_reflection(world)
+        # Reflection generation disabled.
+        # if done:
+        #     self.generate_reflection(world)
 
     def get_strategy_summary(self) -> str:
         """Get a summary of this agent's learned strategy.

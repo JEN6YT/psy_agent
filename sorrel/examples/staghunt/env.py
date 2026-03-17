@@ -267,6 +267,7 @@ class StagHuntEnv:
         self._handle_attacks(actions, step_rewards)
 
         # Timers/transitions/regeneration
+        self._update_attack_cooldowns()
         self._update_frozen_timers()
         self._regeneration_step()
         self._transition_step() # resource respawns, beam decay, etc.
@@ -466,10 +467,15 @@ class StagHuntEnv:
                 if not should_harm:
                     return
 
-                attackers_by_resource.setdefault(id(entity), set()).add(agent.agent_id)
+                contributors = attackers_by_resource.setdefault(
+                    id(entity),
+                    set(getattr(entity, "_attack_contributors", set())),
+                )
+                contributors.add(agent.agent_id)
+                entity._attack_contributors = set(contributors)
                 defeated = entity.on_attack(world, world.current_turn)
                 if defeated:
-                    attackers = attackers_by_resource.get(id(entity), {agent.agent_id})
+                    attackers = set(getattr(entity, "_attack_contributors", set())) or {agent.agent_id}
                     reward_map = self.handle_resource_defeat(attackers, entity, world)
                     for rid, amount in reward_map.items():
                         step_rewards[rid] += amount
@@ -574,6 +580,20 @@ class StagHuntEnv:
 
         if not attackers:
             return {}
+
+        cfg = getattr(world, "config", None)
+        if isinstance(cfg, dict):
+            wcfg = cfg.get("world", {})
+            quorum_k = int(wcfg.get("stag_quorum_k", 2))
+            sucker_payoff = float(wcfg.get("sucker_payoff", 0.0))
+        else:
+            wcfg = getattr(cfg, "world", cfg)
+            quorum_k = int(getattr(wcfg, "stag_quorum_k", 2))
+            sucker_payoff = float(getattr(wcfg, "sucker_payoff", 0.0))
+
+        if rtype == "stag" and len(attackers) < quorum_k:
+            # A stag only yields payoff if enough distinct agents contributed.
+            return {aid: sucker_payoff for aid in attackers}
 
         per_share = total / float(len(attackers))
 
@@ -692,6 +712,12 @@ class StagHuntEnv:
             self.agent_frozen[aid] -= 1
             if self.agent_frozen[aid] <= 0:
                 del self.agent_frozen[aid]
+
+    def _update_attack_cooldowns(self) -> None:
+        for agent in self.agents:
+            cooldown = int(getattr(agent, "attack_cooldown_timer", 0))
+            if cooldown > 0:
+                agent.attack_cooldown_timer = cooldown - 1
 
     def _regeneration_step(self) -> None:
         # Dynamic layer: Empty cells may spawn per Sand rules (via world.transition)
@@ -990,7 +1016,9 @@ class StagHuntEnv:
                 "On a valid hit, hare/stag HP decreases by 1.",
                 "If resource HP <= 0, resource is defeated and removed; attackers share reward.",
                 f"If a hare is defeated, each attacker gains {hare_reward} / num_attackers reward.",
-                f"If a stag is defeated, each attacker gains {stag_reward} / num_attackers reward.",
+                f"A stag only pays out if at least {int(getw('stag_quorum_k', 2))} distinct agents contributed to defeating it.",
+                f"If a stag is defeated with enough contributors, each attacker gains {stag_reward} / num_attackers reward.",
+                f"If fewer than {int(getw('stag_quorum_k', 2))} agents contribute to a stag kill, each contributor gets sucker_payoff = {float(getw('sucker_payoff', 0.0))}.",
                 f"When you attack (even if you hit), your HP decreases by 1, and your reward decreases by {attack_cost}.",   
                 "If hare/stag has HP below max, it can regenerate over time, ",
                 f"since last attck, starting after {hare_regeneration_cooldown} turns for hare and {stag_regeneration_cooldown} turns for stag, ",
