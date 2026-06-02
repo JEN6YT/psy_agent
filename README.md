@@ -1,4 +1,5 @@
-This repo builds on [Sorrel](https://github.com/social-ai-uoft/sorrel).
+This repo is for the thesis project [Out-of-Distribution
+Cooperation in Multi-Agent LLM Systems](https://github.com/JEN6YT/psy_agent/blob/main/Thesis%20Report.pdf). It builds on [Sorrel](https://github.com/social-ai-uoft/sorrel).
 
 # Stag Hunt Example
 
